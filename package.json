@@ -16,7 +16,9 @@
     "db:migrate:supabase": "tsx scripts/migrate.ts --target=supabase --seed",
     "db:verify:supabase": "tsx scripts/verify-db.ts --target=supabase",
     "db:studio": "drizzle-kit studio",
-    "db:pull": "drizzle-kit pull"
+    "db:pull": "drizzle-kit pull",
+    "prices": "tsx scripts/fetch-prices.ts",
+    "prices:supabase": "tsx scripts/fetch-prices.ts --target=supabase"
   },
   "dependencies": {
     "dotenv": "^18.0.1",

@@ -2,9 +2,10 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
-import { getCompanyBySymbol, getFactHistory } from '@/db/queries'
+import { getCompanyBySymbol, getFactHistory, getLatestQuotes } from '@/db/queries'
 import { fiscalYearRangeLabel } from '@/lib/fiscal'
 import { computeHistory, summariseHistory, totalDebt } from '@/lib/metrics'
+import { computeValuation } from '@/lib/prices'
 import { formatBDT, formatPercent, formatPerShare, formatRatio } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +20,11 @@ export default async function CompanyPage({
   if (!company) notFound()
 
   const fye = { month: company.fiscalYearEndMonth, day: company.fiscalYearEndDay }
-  const { years, factCount, unverifiedCount } = await getFactHistory(company.id)
+  const [{ years, factCount, unverifiedCount }, quotes] = await Promise.all([
+    getFactHistory(company.id),
+    getLatestQuotes(),
+  ])
+  const quote = quotes.get(company.dseSymbol)
 
   const metrics = computeHistory(years)
   const summary = summariseHistory(years, metrics)
@@ -27,6 +32,18 @@ export default async function CompanyPage({
   const latest = years[years.length - 1]
   const latestMetrics = metrics[metrics.length - 1]
   const categories = years.map((year) => `FY${year.fiscalYear}`)
+
+  const valuation =
+    quote && latest
+      ? computeValuation(quote, {
+          eps: latest.values.eps_basic,
+          navps: latest.values.navps,
+          dividendPerShare: latest.values.dividend_per_share,
+        })
+      : null
+
+  const changePct =
+    quote && quote.ycp !== null && quote.ycp > 0 ? quote.close / quote.ycp - 1 : null
 
   const value = (tag: string, index: number) => years[index]?.values[tag] ?? null
   const seriesFor = (tag: string) => years.map((_, i) => value(tag, i))
@@ -49,12 +66,28 @@ export default async function CompanyPage({
           </p>
         </div>
 
-        <Link
-          href={`/companies/${company.dseSymbol}/data`}
-          className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
-        >
-          Enter data
-        </Link>
+        <div className="flex items-center gap-6">
+          {quote ? (
+            <div className="text-right">
+              <p className="text-2xl font-medium text-neutral-100">৳{quote.close.toFixed(2)}</p>
+              <p className="text-xs">
+                {changePct === null ? null : (
+                  <span className={changePct >= 0 ? 'text-emerald-500' : 'text-red-400'}>
+                    {formatPercent(changePct, 2, true)}
+                  </span>
+                )}{' '}
+                <span className="text-neutral-600">{quote.tradeDate}</span>
+              </p>
+            </div>
+          ) : null}
+
+          <Link
+            href={`/companies/${company.dseSymbol}/data`}
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
+          >
+            Enter data
+          </Link>
+        </div>
       </header>
 
       {years.length === 0 ? (
@@ -88,6 +121,42 @@ export default async function CompanyPage({
             <Stat label="Debt / equity" value={formatRatio(latestMetrics.debtToEquity)} sub={formatBDT(totalDebt(latest))} />
             <Stat label="Payout" value={formatPercent(latestMetrics.payoutRatio, 0)} sub="of EPS" />
           </section>
+
+          {/* Valuation. Needs no share count — PE and PB are both per-share
+              against a per-share figure. */}
+          {valuation ? (
+            <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-4">
+              <Stat
+                label="PE"
+                value={formatRatio(valuation.pe)}
+                sub={`on FY${latest.fiscalYear} EPS`}
+              />
+              <Stat label="PB" value={formatRatio(valuation.pb)} sub="on NAVPS" />
+              <Stat
+                label="Dividend yield"
+                value={formatPercent(valuation.dividendYield, 2)}
+                sub="declared, at today's price"
+              />
+              <Stat
+                label="52-week range"
+                value={
+                  valuation.rangePosition === null
+                    ? '—'
+                    : `${Math.round(valuation.rangePosition * 100)}%`
+                }
+                sub={
+                  valuation.aboveLow === null
+                    ? undefined
+                    : `${formatPercent(valuation.aboveLow, 1, true)} from low`
+                }
+              />
+            </section>
+          ) : (
+            <p className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-2.5 text-xs text-neutral-500">
+              No price yet, so PE, PB and yield cannot be shown. Run{' '}
+              <code className="text-neutral-400">npm run prices</code> or wait for the daily job.
+            </p>
+          )}
 
           {/* Long-run shape. CAGR is hostage to its endpoints, so it sits next
               to the charts rather than standing in for them. */}

@@ -180,6 +180,83 @@ export async function getFactHistory(
   }
 }
 
+/** Most recent quote per company, however stale. */
+export async function getLatestQuotes() {
+  const rows = await db.execute<{
+    dse_symbol: string
+    trade_date: string
+    close_price: string
+    ycp: string | null
+    yearly_high: string | null
+    yearly_low: string | null
+  }>(sql`
+    SELECT DISTINCT ON (c.dse_symbol)
+           c.dse_symbol, p.trade_date, p.close_price, p.ycp, p.yearly_high, p.yearly_low
+      FROM daily_prices p
+      JOIN companies c ON c.id = p.company_id
+     ORDER BY c.dse_symbol, p.trade_date DESC
+  `)
+
+  return new Map(
+    rows.rows.map((row) => [
+      row.dse_symbol,
+      {
+        tradeDate: row.trade_date,
+        close: Number(row.close_price),
+        ycp: row.ycp === null ? null : Number(row.ycp),
+        yearlyHigh: row.yearly_high === null ? null : Number(row.yearly_high),
+        yearlyLow: row.yearly_low === null ? null : Number(row.yearly_low),
+      },
+    ]),
+  )
+}
+
+/**
+ * Every tracked company's annual facts in one query.
+ *
+ * Eight companies at a few hundred rows each — fetching it whole and shaping
+ * it in memory is far cheaper than eight round trips to Supabase's pooler.
+ */
+export async function getAllFactHistories(basis: 'consolidated' | 'standalone' = 'consolidated') {
+  const rows = await db
+    .select({
+      dseSymbol: companies.dseSymbol,
+      fiscalYear: fiscalPeriods.fiscalYear,
+      tag: lineItemDefs.tag,
+      valueBase: financialFacts.valueBase,
+    })
+    .from(financialFacts)
+    .innerJoin(fiscalPeriods, eq(fiscalPeriods.id, financialFacts.periodId))
+    .innerJoin(companies, eq(companies.id, fiscalPeriods.companyId))
+    .innerJoin(lineItemDefs, eq(lineItemDefs.id, financialFacts.lineItemId))
+    .where(
+      and(
+        eq(fiscalPeriods.periodType, 'annual'),
+        eq(fiscalPeriods.basis, basis),
+        eq(financialFacts.isCurrent, true),
+      ),
+    )
+    .orderBy(asc(companies.dseSymbol), asc(fiscalPeriods.fiscalYear))
+
+  const bySymbol = new Map<number | string, Map<number, Record<string, number | null>>>()
+
+  for (const row of rows) {
+    if (!bySymbol.has(row.dseSymbol)) bySymbol.set(row.dseSymbol, new Map())
+    const years = bySymbol.get(row.dseSymbol)!
+    if (!years.has(row.fiscalYear)) years.set(row.fiscalYear, {})
+    years.get(row.fiscalYear)![row.tag] = row.valueBase === null ? null : Number(row.valueBase)
+  }
+
+  return new Map(
+    [...bySymbol.entries()].map(([symbol, years]) => [
+      symbol as string,
+      [...years.entries()]
+        .map(([fiscalYear, values]) => ({ fiscalYear, values }))
+        .sort((a, b) => a.fiscalYear - b.fiscalYear),
+    ]),
+  )
+}
+
 export async function listSourceDocuments(companyId: number) {
   return db
     .select()
