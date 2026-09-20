@@ -12,7 +12,16 @@ import { COOKIE_NAME, verifySessionToken } from '@/lib/auth'
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get(COOKIE_NAME)?.value
 
-  if (await verifySessionToken(token)) return NextResponse.next()
+  let authenticated = false
+  try {
+    authenticated = await verifySessionToken(token)
+  } catch (error) {
+    // Middleware runs on every route, so throwing here would take the whole
+    // site down with a 500 rather than showing a login page. Fail closed.
+    console.error('[auth] session verification failed:', error)
+  }
+
+  if (authenticated) return NextResponse.next()
 
   const loginUrl = new URL('/login', request.url)
 

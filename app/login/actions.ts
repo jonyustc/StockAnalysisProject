@@ -25,8 +25,10 @@ export async function login(_previous: LoginState, formData: FormData): Promise<
   try {
     ok = checkPassword(password)
   } catch (error) {
-    // A misconfigured server must not look like a wrong password.
-    return { error: error instanceof Error ? error.message : 'Authentication is misconfigured.' }
+    // A misconfigured server must not look like a wrong password — but the
+    // details of why go to the server log, not to whoever is at the form.
+    console.error('[auth] sign-in is misconfigured:', error)
+    return { error: 'Sign-in is not configured on this server.' }
   }
 
   if (!ok) return { error: 'Incorrect password.' }
