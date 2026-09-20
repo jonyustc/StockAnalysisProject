@@ -1,5 +1,8 @@
-import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
 import { defineConfig } from 'drizzle-kit'
+
+loadEnv({ path: '.env.local', quiet: true })
+loadEnv({ quiet: true })
 
 /**
  * drizzle-kit is used for `studio` (a browser DB viewer) and `pull`

@@ -11,6 +11,8 @@ import 'server-only'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { Pool } from 'pg'
 
+// Must come before any connection is opened.
+import './pg-types'
 import * as schema from './schema'
 
 const connectionString = process.env.DATABASE_URL

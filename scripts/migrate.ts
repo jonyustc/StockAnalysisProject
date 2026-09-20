@@ -17,8 +17,14 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import 'dotenv/config'
+import { config as loadEnv } from 'dotenv'
 import { Client } from 'pg'
+
+// Next.js loads .env.local automatically; a standalone script does not.
+// Load it first — dotenv does not overwrite already-set vars, so .env.local
+// wins and .env acts as a fallback.
+loadEnv({ path: '.env.local', quiet: true })
+loadEnv({ quiet: true })
 
 const MIGRATIONS_DIR = join(process.cwd(), 'db', 'migrations')
 const SEED_DIR = join(process.cwd(), 'db', 'seed')
