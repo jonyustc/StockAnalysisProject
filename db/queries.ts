@@ -130,6 +130,56 @@ export type FactRow = {
   verification: 'unverified' | 'verified' | 'disputed'
 }
 
+/**
+ * Every current annual fact for a company, shaped for the metrics layer.
+ *
+ * Values come back as `value_base` — canonical BDT for amounts, as-reported
+ * for per-share figures, since those are stored with scale 'unit' and so are
+ * already base. Parsing to Number happens here, at the edge, rather than
+ * letting the driver do it invisibly.
+ */
+export async function getFactHistory(
+  companyId: number,
+  basis: 'consolidated' | 'standalone' = 'consolidated',
+) {
+  const rows = await db
+    .select({
+      fiscalYear: fiscalPeriods.fiscalYear,
+      tag: lineItemDefs.tag,
+      valueBase: financialFacts.valueBase,
+      verification: financialFacts.verification,
+    })
+    .from(financialFacts)
+    .innerJoin(fiscalPeriods, eq(fiscalPeriods.id, financialFacts.periodId))
+    .innerJoin(lineItemDefs, eq(lineItemDefs.id, financialFacts.lineItemId))
+    .where(
+      and(
+        eq(fiscalPeriods.companyId, companyId),
+        eq(fiscalPeriods.periodType, 'annual'),
+        eq(fiscalPeriods.basis, basis),
+        eq(financialFacts.isCurrent, true),
+      ),
+    )
+    .orderBy(asc(fiscalPeriods.fiscalYear))
+
+  const byYear = new Map<number, Record<string, number | null>>()
+  let unverified = 0
+
+  for (const row of rows) {
+    if (!byYear.has(row.fiscalYear)) byYear.set(row.fiscalYear, {})
+    byYear.get(row.fiscalYear)![row.tag] = row.valueBase === null ? null : Number(row.valueBase)
+    if (row.verification === 'unverified') unverified += 1
+  }
+
+  return {
+    years: [...byYear.entries()]
+      .map(([fiscalYear, values]) => ({ fiscalYear, values }))
+      .sort((a, b) => a.fiscalYear - b.fiscalYear),
+    factCount: rows.length,
+    unverifiedCount: unverified,
+  }
+}
+
 export async function listSourceDocuments(companyId: number) {
   return db
     .select()
