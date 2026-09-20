@@ -18,7 +18,9 @@
     "db:studio": "drizzle-kit studio",
     "db:pull": "drizzle-kit pull",
     "prices": "tsx scripts/fetch-prices.ts",
-    "prices:supabase": "tsx scripts/fetch-prices.ts --target=supabase"
+    "prices:supabase": "tsx scripts/fetch-prices.ts --target=supabase",
+    "import": "tsx scripts/import-stockanalysis.ts",
+    "import:supabase": "tsx scripts/import-stockanalysis.ts --target=supabase"
   },
   "dependencies": {
     "dotenv": "^18.0.1",
