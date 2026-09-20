@@ -133,12 +133,14 @@ ON CONFLICT (code) DO NOTHING;
 
 
 -- -----------------------------------------------------------------------------
--- The seven tracked companies
+-- The tracked companies
 --
--- !! VERIFY THE FISCAL YEAR ENDS BEFORE ENTERING DATA !!
--- Marico (31 Mar) is confirmed from its published statements. The others are
--- best-known values and are cheap to fix now, expensive to fix after you have
--- typed in ten years of figures against the wrong period boundaries.
+-- Every symbol below was checked against dsebd.org and every fiscal year end
+-- against the company's published financial statements.
+--
+-- Note LafargeHolcim is LHB, not LHBL — DSE returns "No company found" for
+-- LHBL. The daily price job looks companies up by DSE symbol, so this is not
+-- a cosmetic detail.
 -- -----------------------------------------------------------------------------
 
 INSERT INTO companies (
@@ -148,13 +150,14 @@ INSERT INTO companies (
 SELECT v.dse_symbol, v.alt_symbols, v.name, v.short_name, s.id, 'general'::statement_template,
        v.fye_month, v.fye_day, v.ir_url, v.notes
 FROM (VALUES
-    ('SQURPHARMA', '{SQUARE}'::text[],  'Square Pharmaceuticals PLC',      'Square Pharma', 'pharmaceuticals-chemicals', 6::smallint,  30::smallint, 'https://www.squarepharma.com.bd/annual-reports.php', 'FYE to verify: believed 30 June.'),
-    ('MARICO',     '{}'::text[],        'Marico Bangladesh Limited',       'Marico',        'pharmaceuticals-chemicals', 3::smallint,  31::smallint, 'https://marico.com/bangladesh/investors',            'FYE 31 March confirmed (fiscal year April–March).'),
-    ('BERGERPBL',  '{BERGER}'::text[],  'Berger Paints Bangladesh Limited','Berger',        'miscellaneous',             3::smallint,  31::smallint, NULL, 'FYE to verify: believed 31 March. Sector to confirm.'),
-    ('RENATA',     '{}'::text[],        'Renata PLC',                      'Renata',        'pharmaceuticals-chemicals', 6::smallint,  30::smallint, NULL, 'FYE to verify: believed 30 June.'),
-    ('OLYMPIC',    '{}'::text[],        'Olympic Industries PLC',          'Olympic',       'food-allied',               6::smallint,  30::smallint, NULL, 'FYE to verify: believed 30 June.'),
-    ('BSRMSTEEL',  '{BSRM}'::text[],    'BSRM Steels Limited',             'BSRM Steels',   'engineering',               6::smallint,  30::smallint, NULL, 'FYE to verify. Confirm whether you track BSRM Steels or BSRM Ltd.'),
-    ('LHBL',       '{LHB}'::text[],     'LafargeHolcim Bangladesh PLC',    'LafargeHolcim', 'cement',                   12::smallint,  31::smallint, NULL, 'FYE 31 December. stockanalysis.com lists this as LHB.')
+    ('SQURPHARMA', '{SQUARE}'::text[],  'Square Pharmaceuticals PLC',      'Square Pharma', 'pharmaceuticals-chemicals', 6::smallint,  30::smallint, 'https://www.squarepharma.com.bd/annual-reports.php', 'FYE 30 June (Jul-Jun), confirmed.'),
+    ('MARICO',     '{}'::text[],        'Marico Bangladesh Limited',       'Marico',        'pharmaceuticals-chemicals', 3::smallint,  31::smallint, 'https://marico.com/bangladesh/investors',            'FYE 31 March (Apr-Mar), confirmed.'),
+    ('BERGERPBL',  '{BERGER}'::text[],  'Berger Paints Bangladesh Ltd',    'Berger',        'miscellaneous',             3::smallint,  31::smallint, NULL, 'FYE 31 March (Apr-Mar), confirmed. Sector unverified.'),
+    ('RENATA',     '{}'::text[],        'Renata PLC',                      'Renata',        'pharmaceuticals-chemicals', 6::smallint,  30::smallint, NULL, 'FYE 30 June (Jul-Jun), confirmed.'),
+    ('OLYMPIC',    '{}'::text[],        'Olympic Industries PLC',          'Olympic',       'food-allied',               6::smallint,  30::smallint, NULL, 'FYE 30 June (Jul-Jun), confirmed.'),
+    ('BSRMSTEEL',  '{BSRM}'::text[],    'BSRM Steels Limited',             'BSRM Steels',   'engineering',               6::smallint,  30::smallint, NULL, 'FYE 30 June (Jul-Jun), confirmed.'),
+    ('BSRMLTD',    '{}'::text[],        'Bangladesh Steel Re-Rolling Mills Limited', 'BSRM Ltd', 'engineering',          6::smallint,  30::smallint, NULL, 'FYE 30 June (Jul-Jun), confirmed. Separate listing from BSRMSTEEL; both are tracked.'),
+    ('LHB',        '{LHBL}'::text[],    'LafargeHolcim Bangladesh PLC',    'LafargeHolcim', 'cement',                   12::smallint,  31::smallint, NULL, 'FYE 31 December (Jan-Dec), confirmed. DSE code is LHB, not LHBL.')
 ) AS v(dse_symbol, alt_symbols, name, short_name, sector_slug, fye_month, fye_day, ir_url, notes)
 LEFT JOIN sectors s ON s.slug = v.sector_slug
 ON CONFLICT (dse_symbol) DO NOTHING;
