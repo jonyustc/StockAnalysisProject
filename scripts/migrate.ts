@@ -17,31 +17,19 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { config as loadEnv } from 'dotenv'
 import { Client } from 'pg'
 
-// Next.js loads .env.local automatically; a standalone script does not.
-// Load it first — dotenv does not overwrite already-set vars, so .env.local
-// wins and .env acts as a fallback.
-loadEnv({ path: '.env.local', quiet: true })
-loadEnv({ quiet: true })
+import '../db/pg-types'
+import { resolveTarget, sslFor } from './target'
 
 const MIGRATIONS_DIR = join(process.cwd(), 'db', 'migrations')
 const SEED_DIR = join(process.cwd(), 'db', 'seed')
 
 /**
- * Migrations run against the direct connection, not the pooler: DDL and
- * advisory locks do not behave under transaction-mode pooling.
+ * Migrations run against the direct/session connection, not the transaction
+ * pooler: DDL and advisory locks do not behave under transaction-mode pooling.
  */
-const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL
-
-if (!connectionString) {
-  console.error('DIRECT_URL / DATABASE_URL is not set. See .env.example.')
-  process.exit(1)
-}
-
-const isLocal =
-  connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
+const resolved = resolveTarget()
 
 const args = new Set(process.argv.slice(2))
 const withSeed = args.has('--seed')
@@ -62,9 +50,11 @@ function sha256(text: string): string {
 }
 
 async function main() {
+  console.log(`\ntarget: ${resolved.target} — ${resolved.describe}\n`)
+
   const client = new Client({
-    connectionString,
-    ssl: isLocal ? undefined : { rejectUnauthorized: false },
+    connectionString: resolved.connectionString,
+    ssl: sslFor(resolved),
   })
 
   await client.connect()

@@ -13,6 +13,8 @@
     "db:status": "tsx scripts/migrate.ts --status",
     "db:verify": "tsx scripts/verify-db.ts",
     "db:seed": "tsx scripts/migrate.ts --seed",
+    "db:migrate:supabase": "tsx scripts/migrate.ts --target=supabase --seed",
+    "db:verify:supabase": "tsx scripts/verify-db.ts --target=supabase",
     "db:studio": "drizzle-kit studio",
     "db:pull": "drizzle-kit pull"
   },

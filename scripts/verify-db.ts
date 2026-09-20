@@ -9,18 +9,21 @@
  * still differ in the cloud.
  */
 
-import { config as loadEnv } from 'dotenv'
 import { Client } from 'pg'
 
 import '../db/pg-types'
 import { fiscalYearBounds } from '../lib/fiscal'
+import { resolveTarget, sslFor } from './target'
 
-loadEnv({ path: '.env.local', quiet: true })
-loadEnv({ quiet: true })
+const resolved = resolveTarget()
 
-const client = new Client({ connectionString: process.env.DIRECT_URL })
+const client = new Client({
+  connectionString: resolved.connectionString,
+  ssl: sslFor(resolved),
+})
 
 async function main() {
+  console.log(`\ntarget: ${resolved.target} — ${resolved.describe}\n`)
   await client.connect()
 
   const counts = await client.query(`
