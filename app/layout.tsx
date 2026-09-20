@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 
+import { logout } from './login/actions'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -20,6 +21,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <span className="text-xs text-neutral-500">
               Fundamentals entered from primary sources
             </span>
+            <form action={logout} className="ml-auto">
+              <button
+                type="submit"
+                className="text-xs text-neutral-600 hover:text-neutral-400"
+              >
+                Sign out
+              </button>
+            </form>
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
