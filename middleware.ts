@@ -42,6 +42,8 @@ export const config = {
      *   _next        framework assets
      *   favicon.ico  requested before any redirect can help
      */
-    '/((?!login|api/cron|_next/static|_next/image|favicon.ico).*)',
+    // Anchored so only these exact paths (and their subpaths) are excluded.
+    // An unanchored "login" would also have let through /loginsomething.
+    '/((?!login$|login/|api/cron$|api/cron/|_next/static/|_next/image|favicon.ico$).*)',
   ],
 }

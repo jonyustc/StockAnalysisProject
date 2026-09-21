@@ -15,6 +15,9 @@ import '../db/pg-types'
 import { fiscalYearBounds } from '../lib/fiscal'
 import { resolveTarget, sslFor } from './target'
 
+/** No real period will ever carry this year, so the test cannot touch live data. */
+const SENTINEL_FISCAL_YEAR = 1900
+
 const resolved = resolveTarget()
 
 const client = new Client({
@@ -45,17 +48,21 @@ async function main() {
   `)
   console.table(companies.rows)
 
-  // Round-trip a real figure: Marico FY2026 revenue, reported as 20,712 in a
-  // "Taka in million" statement. Rolled back so the database stays empty.
+  // Round-trip a real figure: Marico's FY2026 revenue of 20,712 as printed in
+  // a "Taka in million" statement — but filed under a sentinel fiscal year, so
+  // it cannot collide with a real period. Using a live year worked only while
+  // the database was empty; once Marico FY2026 was imported this failed on the
+  // unique index, and had the insert succeeded the cleanup would have deleted
+  // genuine data.
   await client.query('BEGIN')
 
-  const { start, end } = fiscalYearBounds({ month: 3, day: 31 }, 2026)
+  const { start, end } = fiscalYearBounds({ month: 3, day: 31 }, SENTINEL_FISCAL_YEAR)
 
   const period = await client.query(
     `INSERT INTO fiscal_periods (company_id, fiscal_year, period_start, period_end)
-     VALUES ((SELECT id FROM companies WHERE dse_symbol = 'MARICO'), 2026, $1, $2)
+     VALUES ((SELECT id FROM companies WHERE dse_symbol = 'MARICO'), $3, $1, $2)
      RETURNING id, period_start, period_end`,
-    [start, end],
+    [start, end, SENTINEL_FISCAL_YEAR],
   )
   const stored = period.rows[0]
   const datesIntact = stored.period_start === start && stored.period_end === end
@@ -91,8 +98,14 @@ async function main() {
 
   await client.query('ROLLBACK')
 
-  const after = await client.query('SELECT count(*) FROM fiscal_periods')
-  console.log('rollback left fiscal_periods at:', after.rows[0].count)
+  const after = await client.query(
+    'SELECT count(*)::int AS n FROM fiscal_periods WHERE fiscal_year = $1',
+    [SENTINEL_FISCAL_YEAR],
+  )
+  console.log(
+    'rollback:',
+    after.rows[0].n === 0 ? 'ok — nothing left behind' : `FAILED — ${after.rows[0].n} row(s) remain`,
+  )
 }
 
 main()

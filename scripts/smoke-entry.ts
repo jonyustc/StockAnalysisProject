@@ -2,8 +2,9 @@
  * End-to-end exercise of the entry save path against the local database.
  *
  * Uses real figures from Marico's FY2026 income statement so the numbers can
- * be eyeballed against the published statement rather than being arbitrary.
- * Cleans up after itself.
+ * be eyeballed against the published statement rather than being arbitrary —
+ * but files them under a sentinel fiscal year, so the test can never collide
+ * with, or delete, genuine data. Cleans up after itself.
  *
  *   npx tsx scripts/smoke-entry.ts
  */
@@ -40,9 +41,16 @@ function form(values: Record<string, string>): FormData {
   return data
 }
 
+/**
+ * A sentinel year no real period will ever use. This test writes through the
+ * real entry action and then deletes the period it made — pointed at a live
+ * fiscal year it would destroy genuine imported data.
+ */
+const SENTINEL_FISCAL_YEAR = 1900
+
 const BASE = {
   symbol: 'MARICO',
-  fiscalYear: '2026',
+  fiscalYear: String(SENTINEL_FISCAL_YEAR),
   basis: 'consolidated',
   scale: 'million',
   auditStatus: 'audited',
@@ -54,7 +62,7 @@ async function run() {
   // Imported after the next/cache stub is installed.
   const { saveAnnualEntry } = await import('../app/actions')
   const { db } = await import('../db/client')
-  const { companies, financialFacts, fiscalPeriods } = await import('../db/schema')
+  const { companies, fiscalPeriods } = await import('../db/schema')
   const { and, eq } = await import('drizzle-orm')
 
   console.log('\n1. save with real figures')
@@ -84,7 +92,7 @@ async function run() {
   const [period] = await db
     .select()
     .from(fiscalPeriods)
-    .where(and(eq(fiscalPeriods.companyId, company.id), eq(fiscalPeriods.fiscalYear, 2026)))
+    .where(and(eq(fiscalPeriods.companyId, company.id), eq(fiscalPeriods.fiscalYear, SENTINEL_FISCAL_YEAR)))
 
   console.log('\n2. stored values')
   const stored = await db.execute(
@@ -107,7 +115,7 @@ async function run() {
   check('parentheses read as negative', capex?.value_reported === '-1240.000000')
   check('blank stored as absent, not zero', navps === undefined)
   check('page number kept', revenue?.source_page === '112')
-  check('period dates correct', period.periodStart === '2025-04-01' && period.periodEnd === '2026-03-31')
+  check('period dates correct', period.periodStart === '1899-04-01' && period.periodEnd === '1900-03-31')
 
   console.log('\n4. re-save clearing a value')
   const second = await saveAnnualEntry(
@@ -116,24 +124,39 @@ async function run() {
   )
   console.log('  ', second)
 
-  const after = await db
-    .select()
-    .from(financialFacts)
-    .where(and(eq(financialFacts.periodId, period.id), eq(financialFacts.isCurrent, true)))
-  check('cleared field removed the fact', !after.some((f) => f.lineItemId === revenueItemId(rows)))
+  // Ask for the tag directly. The previous version compared against a
+  // line_item_id the query never selected, so it was always -1 and the
+  // assertion passed no matter what the database held.
+  const after = await db.execute(
+    `SELECT l.tag FROM financial_facts f
+       JOIN line_item_defs l ON l.id = f.line_item_id
+      WHERE f.period_id = ${period.id} AND f.is_current`,
+  )
+  const remainingTags = (after.rows as { tag: string }[]).map((r) => r.tag)
+
+  check('cleared field removed the fact', !remainingTags.includes('revenue'))
+  check('untouched field survived the re-save', remainingTags.includes('eps_basic'))
 
   console.log('\n5. rejects a bad number without saving anything')
   const bad = await saveAnnualEntry(null, form({ ...BASE, value__revenue: 'see note 14' }))
   check('bad input rejected', bad.ok === false && Boolean(bad.fieldErrors?.revenue))
   console.log('  ', bad.message, bad.fieldErrors)
 
-  // Clean up.
-  await db.delete(fiscalPeriods).where(eq(fiscalPeriods.id, period.id))
-  console.log('\ncleaned up.\n')
-}
+  // Clean up, but never delete a period this test did not create.
+  if (period.fiscalYear !== SENTINEL_FISCAL_YEAR) {
+    throw new Error(
+      `Refusing to delete FY${period.fiscalYear} — the test should only ever own FY${SENTINEL_FISCAL_YEAR}.`,
+    )
+  }
 
-function revenueItemId(rows: Record<string, string>[]): number {
-  return Number(rows.find((r) => r.tag === 'revenue')?.line_item_id ?? -1)
+  await db.delete(fiscalPeriods).where(eq(fiscalPeriods.id, period.id))
+
+  // Deleting the period leaves its source document behind, since documents
+  // outlive the periods that cite them by design.
+  const { sourceDocuments } = await import('../db/schema')
+  await db.delete(sourceDocuments).where(eq(sourceDocuments.title, BASE.docTitle))
+
+  console.log('\ncleaned up.\n')
 }
 
 let failures = 0

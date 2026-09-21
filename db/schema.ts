@@ -209,7 +209,12 @@ export const sourceDocuments = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('source_documents_company_idx').on(t.companyId, t.fiscalYear)],
+  (t) => [
+    index('source_documents_company_idx').on(t.companyId, t.fiscalYear),
+    // Lets an importer upsert its own document instead of leaving the previous
+    // one orphaned on every re-run.
+    uniqueIndex('source_documents_company_title_unique').on(t.companyId, t.title),
+  ],
 )
 
 /* -------------------------------------------------------------------------- */

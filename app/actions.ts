@@ -111,10 +111,14 @@ export async function saveAnnualEntry(
           docType: 'annual_report',
           title: docTitle,
           fiscalYear,
-          // The schema requires one or the other; default to a path built from
-          // the title rather than rejecting the save.
-          onedrivePath: onedrivePath ?? (sourceUrl ? null : `${symbol}/${docTitle}`),
+          // Left null when you have not said where the file is. Inventing a
+          // path would look like provenance while pointing at nothing.
+          onedrivePath,
           sourceUrl,
+        })
+        .onConflictDoUpdate({
+          target: [sourceDocuments.companyId, sourceDocuments.title],
+          set: { fiscalYear, onedrivePath, sourceUrl },
         })
         .returning({ id: sourceDocuments.id })
 

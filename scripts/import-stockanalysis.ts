@@ -145,9 +145,15 @@ async function importCompany(
     day: company.fiscal_year_end_day,
   }
 
+  // Upsert, so re-running the import reuses its document rather than leaving
+  // the previous one orphaned.
   const { rows: docRows } = await client.query<{ id: string }>(
     `INSERT INTO source_documents (company_id, doc_type, title, source_url, notes)
      VALUES ($1, 'other', $2, $3, $4)
+     ON CONFLICT (company_id, title)
+     DO UPDATE SET source_url = EXCLUDED.source_url,
+                   notes = EXCLUDED.notes,
+                   accessed_date = current_date
      RETURNING id`,
     [
       company.id,

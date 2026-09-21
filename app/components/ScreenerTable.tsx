@@ -186,11 +186,29 @@ export function ScreenerTable({ rows, sectors }: { rows: ScreenerRow[]; sectors:
             ))}
           </select>
 
-          <NumberFilter label="Max PE" onChange={(v) => setRange('pe', 'max', v)} />
-          <NumberFilter label="Min ROE %" onChange={(v) => setRange('roe', 'min', pct(v))} />
-          <NumberFilter label="Max D/E" onChange={(v) => setRange('debtToEquity', 'max', v)} />
+          {/* Controlled, so Reset and the presets actually clear or update
+              what is shown. Uncontrolled inputs kept stale text on screen
+              while the filter behind them had already changed. */}
+          <NumberFilter
+            label="Max PE"
+            value={filters.ranges.pe?.max}
+            onChange={(v) => setRange('pe', 'max', v)}
+          />
+          <NumberFilter
+            label="Min ROE %"
+            value={filters.ranges.roe?.min}
+            asPercent
+            onChange={(v) => setRange('roe', 'min', pct(v))}
+          />
+          <NumberFilter
+            label="Max D/E"
+            value={filters.ranges.debtToEquity?.max}
+            onChange={(v) => setRange('debtToEquity', 'max', v)}
+          />
           <NumberFilter
             label="Min yield %"
+            value={filters.ranges.dividendYield?.min}
+            asPercent
             onChange={(v) => setRange('dividendYield', 'min', pct(v))}
           />
 
@@ -313,13 +331,30 @@ function pct(raw: string): string {
   return Number.isNaN(parsed) ? '' : String(parsed / 100)
 }
 
-function NumberFilter({ label, onChange }: { label: string; onChange: (value: string) => void }) {
+function NumberFilter({
+  label,
+  value,
+  asPercent = false,
+  onChange,
+}: {
+  label: string
+  /** The stored value — a fraction for percent fields. */
+  value: number | undefined
+  asPercent?: boolean
+  onChange: (value: string) => void
+}) {
+  // Percent filters are stored as 0.15 and shown as 15. Rounding keeps
+  // 0.15 * 100 from displaying as 15.000000000000002.
+  const shown =
+    value === undefined ? '' : asPercent ? String(Math.round(value * 1000) / 10) : String(value)
+
   return (
     <input
       type="number"
       step="any"
       placeholder={label}
       aria-label={label}
+      value={shown}
       onChange={(e) => onChange(e.target.value)}
       className="w-28 rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 outline-none placeholder:text-neutral-600 focus:border-sky-600"
     />
@@ -353,7 +388,10 @@ function Th({
         }`}
       >
         {label}
-        <span aria-hidden className={active ? '' : 'opacity-0 group-hover:opacity-40'}>
+        {/* Always faintly visible. This previously used group-hover with no
+            `group` ancestor, so the affordance never appeared at all and the
+            columns looked unsortable. */}
+        <span aria-hidden className={active ? '' : 'text-neutral-700'}>
           {active ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}
         </span>
       </button>
