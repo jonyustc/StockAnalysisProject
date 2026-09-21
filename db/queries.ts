@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
 import type { CorporateActionInput } from '@/lib/corporate-actions'
 
@@ -11,6 +11,7 @@ import {
   financialFacts,
   fiscalPeriods,
   lineItemDefs,
+  portfolioTransactions,
   sectors,
   sourceDocuments,
 } from './schema'
@@ -338,4 +339,37 @@ export async function listSourceDocuments(companyId: number) {
     .from(sourceDocuments)
     .where(eq(sourceDocuments.companyId, companyId))
     .orderBy(asc(sourceDocuments.fiscalYear))
+}
+
+/** The whole ledger, newest first, with the company symbol attached. */
+export async function listPortfolioTransactions() {
+  const rows = await db
+    .select({
+      id: portfolioTransactions.id,
+      symbol: companies.dseSymbol,
+      companyName: companies.name,
+      sector: sectors.name,
+      tradeDate: portfolioTransactions.tradeDate,
+      txnType: portfolioTransactions.txnType,
+      quantity: portfolioTransactions.quantity,
+      pricePerShare: portfolioTransactions.pricePerShare,
+      grossAmount: portfolioTransactions.grossAmount,
+      commission: portfolioTransactions.commission,
+      taxWithheld: portfolioTransactions.taxWithheld,
+      notes: portfolioTransactions.notes,
+    })
+    .from(portfolioTransactions)
+    .innerJoin(companies, eq(companies.id, portfolioTransactions.companyId))
+    .leftJoin(sectors, eq(sectors.id, companies.sectorId))
+    .orderBy(desc(portfolioTransactions.tradeDate), desc(portfolioTransactions.id))
+
+  // Numeric columns arrive as strings on purpose; convert once, here.
+  return rows.map((row) => ({
+    ...row,
+    quantity: row.quantity === null ? null : Number(row.quantity),
+    pricePerShare: row.pricePerShare === null ? null : Number(row.pricePerShare),
+    grossAmount: row.grossAmount === null ? null : Number(row.grossAmount),
+    commission: Number(row.commission),
+    taxWithheld: Number(row.taxWithheld),
+  }))
 }

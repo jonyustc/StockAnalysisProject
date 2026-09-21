@@ -642,3 +642,70 @@ export type NewCorporateAction = typeof corporateActions.$inferInsert
 export type DailyPrice = typeof dailyPrices.$inferSelect
 export type SourceDocument = typeof sourceDocuments.$inferSelect
 export type ResearchNote = typeof researchNotes.$inferSelect
+
+/* -------------------------------------------------------------------------- */
+/* portfolio_transactions                                                      */
+/* -------------------------------------------------------------------------- */
+
+export const transactionType = pgEnum('transaction_type', [
+  'buy',
+  'sell',
+  'bonus',
+  'rights',
+  'dividend',
+])
+
+/**
+ * A chronological ledger of what you actually did. Quantity and average cost
+ * are derived from it in lib/portfolio.ts, never stored — a holding is the
+ * outcome of a sequence of events, not a fact in its own right.
+ */
+export const portfolioTransactions = pgTable(
+  'portfolio_transactions',
+  {
+    id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+    companyId: bigint('company_id', { mode: 'number' })
+      .notNull()
+      .references(() => companies.id, { onDelete: 'restrict' }),
+
+    tradeDate: date('trade_date').notNull(),
+    txnType: transactionType('txn_type').notNull(),
+
+    /** Null for a cash dividend, which moves no shares. */
+    quantity: numeric('quantity', { precision: 20, scale: 4 }),
+    /** Zero for a bonus issue — those shares cost nothing. */
+    pricePerShare: numeric('price_per_share', { precision: 18, scale: 4 }),
+    /** Cash dividend before tax. Only used by 'dividend'. */
+    grossAmount: numeric('gross_amount', { precision: 24, scale: 4 }),
+
+    commission: numeric('commission', { precision: 18, scale: 4 }).notNull().default('0'),
+    taxWithheld: numeric('tax_withheld', { precision: 18, scale: 4 }).notNull().default('0'),
+
+    corporateActionId: bigint('corporate_action_id', { mode: 'number' }).references(
+      () => corporateActions.id,
+      { onDelete: 'set null' },
+    ),
+    notes: text('notes'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('portfolio_transactions_company_idx').on(t.companyId, t.tradeDate),
+    index('portfolio_transactions_date_idx').on(t.tradeDate),
+  ],
+)
+
+export const portfolioTransactionsRelations = relations(portfolioTransactions, ({ one }) => ({
+  company: one(companies, {
+    fields: [portfolioTransactions.companyId],
+    references: [companies.id],
+  }),
+  corporateAction: one(corporateActions, {
+    fields: [portfolioTransactions.corporateActionId],
+    references: [corporateActions.id],
+  }),
+}))
+
+export type PortfolioTransactionRow = typeof portfolioTransactions.$inferSelect
+export type NewPortfolioTransaction = typeof portfolioTransactions.$inferInsert

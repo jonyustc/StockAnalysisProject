@@ -18,9 +18,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="text-sm font-semibold tracking-wide text-neutral-100">
               DSE RESEARCH
             </Link>
-            <span className="text-xs text-neutral-500">
-              Fundamentals entered from primary sources
-            </span>
+            <nav className="flex gap-4 text-xs text-neutral-500">
+              <Link href="/" className="hover:text-neutral-300">
+                Screener
+              </Link>
+              <Link href="/portfolio" className="hover:text-neutral-300">
+                Portfolio
+              </Link>
+            </nav>
             <form action={logout} className="ml-auto">
               <button
                 type="submit"
