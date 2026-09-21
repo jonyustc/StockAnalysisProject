@@ -67,27 +67,44 @@ export default async function CompanyPage({
                 <td className="py-2.5 pr-4 text-right tabular-nums text-neutral-300">
                   {summary?.factCount ?? 0}
                 </td>
+                {/* Verification progress, not just "is there data" — a year
+                    full of unchecked figures is not a finished year. */}
                 <td className="py-2.5 pr-4 text-xs">
                   {!summary ? (
                     <span className="text-neutral-600">Not started</span>
-                  ) : summary.isComplete ? (
-                    <span className="text-emerald-500">Complete</span>
                   ) : (
-                    <span className="text-amber-500">In progress</span>
-                  )}
-                  {summary && summary.unverifiedCount > 0 ? (
-                    <span className="ml-2 text-neutral-600">
-                      {summary.unverifiedCount} unverified
+                    <span className="flex flex-wrap items-center gap-2">
+                      {summary.verifiedCount > 0 ? (
+                        <span className="text-emerald-500">
+                          {summary.verifiedCount} verified
+                        </span>
+                      ) : null}
+                      {summary.unverifiedCount > 0 ? (
+                        <span className="text-amber-500">
+                          {summary.unverifiedCount} unverified
+                        </span>
+                      ) : null}
+                      {summary.disputedCount > 0 ? (
+                        <span className="text-red-400">{summary.disputedCount} disputed</span>
+                      ) : null}
                     </span>
-                  ) : null}
+                  )}
                 </td>
                 <td className="py-2.5 pr-4 text-right">
-                  <Link
-                    href={`/companies/${company.dseSymbol}/${year}/edit`}
-                    className="text-sky-400 hover:text-sky-300"
-                  >
-                    {summary ? 'Edit' : 'Enter'}
-                  </Link>
+                  <span className="inline-flex gap-3">
+                    <Link
+                      href={`/companies/${company.dseSymbol}/${year}/verify`}
+                      className="text-sky-400 hover:text-sky-300"
+                    >
+                      Verify
+                    </Link>
+                    <Link
+                      href={`/companies/${company.dseSymbol}/${year}/edit`}
+                      className="text-neutral-500 hover:text-neutral-300"
+                    >
+                      {summary ? 'Edit' : 'Enter'}
+                    </Link>
+                  </span>
                 </td>
               </tr>
             )

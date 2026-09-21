@@ -89,6 +89,18 @@ export async function getPeriodSummaries(companyId: number) {
           AND ${financialFacts.isCurrent}
           AND ${financialFacts.verification} = 'unverified'
       )`,
+      verifiedCount: sql<number>`(
+        SELECT count(*)::int FROM ${financialFacts}
+        WHERE ${financialFacts.periodId} = ${fiscalPeriods.id}
+          AND ${financialFacts.isCurrent}
+          AND ${financialFacts.verification} = 'verified'
+      )`,
+      disputedCount: sql<number>`(
+        SELECT count(*)::int FROM ${financialFacts}
+        WHERE ${financialFacts.periodId} = ${fiscalPeriods.id}
+          AND ${financialFacts.isCurrent}
+          AND ${financialFacts.verification} = 'disputed'
+      )`,
     })
     .from(fiscalPeriods)
     .where(and(eq(fiscalPeriods.companyId, companyId), eq(fiscalPeriods.periodType, 'annual')))
@@ -120,7 +132,9 @@ export async function getPeriodWithFacts(
 
   const rows = await db
     .select({
+      id: financialFacts.id,
       lineItemId: financialFacts.lineItemId,
+      revision: financialFacts.revision,
       valueReported: financialFacts.valueReported,
       scale: financialFacts.scale,
       sourcePage: financialFacts.sourcePage,
@@ -133,7 +147,9 @@ export async function getPeriodWithFacts(
 }
 
 export type FactRow = {
+  id: number
   lineItemId: number
+  revision: number
   valueReported: string
   scale: 'unit' | 'thousand' | 'lakh' | 'million' | 'crore' | 'billion'
   sourcePage: string | null

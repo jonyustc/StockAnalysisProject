@@ -23,7 +23,8 @@
     "import:supabase": "tsx scripts/import-stockanalysis.ts --target=supabase",
     "db:restore": "tsx scripts/restore-backup.ts",
     "db:backup": "tsx scripts/backup-now.ts",
-    "db:backup:supabase": "tsx scripts/backup-now.ts --target=supabase"
+    "db:backup:supabase": "tsx scripts/backup-now.ts --target=supabase",
+    "smoke": "tsx scripts/smoke-entry.ts && tsx scripts/smoke-verify.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.1",
