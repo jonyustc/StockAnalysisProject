@@ -115,17 +115,51 @@ fiction. The formulae are documented in `db/migrations/0001_init.sql`.
 
 ## Backups
 
-Supabase's free plan has no automated backups. The plan:
+Supabase's free plan has no automated backups; their own docs say to export
+regularly and keep the copies off-platform.
 
-1. Nightly `pg_dump` via GitHub Actions into a private repo — versioned forever,
-   off-platform, and it doubles as the keep-alive that stops a free project
-   pausing after a week of inactivity.
-2. The dump auto-restores into local Postgres, so the backup is proven to work
-   every single day rather than merely existing.
-3. Weekly copy to OneDrive.
+`.github/workflows/backup.yml` runs nightly at 12:30 UTC (after the price
+fetch), dumps production, and commits `dump.sql` to the orphan **`backups`**
+branch. The file is overwritten each night; every past version stays in that
+branch's history:
+
+```bash
+git log --oneline backups
+git show backups@{2026-08-01}:dump.sql > old.sql
+```
+
+Plain SQL rather than gzip, deliberately — git delta-compresses successive text
+versions, so a year of nightly snapshots costs a fraction of 365 archives.
+
+**Verify it, don't assume it:**
+
+```bash
+npm run db:restore                                # restore to a scratch db, count rows, drop it
+npm run db:restore -- --into=dse_research --yes   # actually replace a local database
+npm run db:backup:supabase                        # ad-hoc dump before something risky
+```
+
+Two things this caught that would otherwise have surfaced only in an emergency:
+
+- A **full** Supabase dump carries its own extensions (`supabase_vault`,
+  `pgsodium`) and schemas (`auth`, `storage`, `realtime`). Plain Postgres can't
+  restore it. Dumps are `--schema=public` only.
+- A fresh database already has a `public` schema, so the dump's own
+  `CREATE SCHEMA public` aborts the restore. The restore drops it first.
+
+The workflow refuses to commit a dump that is undersized or missing expected
+tables, so a truncated backup fails the job rather than silently replacing a
+good one.
 
 Worst case, everything is re-typeable from the source documents — which is
 exactly what `source_document_id` and `source_page` are for.
+
+### Setup
+
+Add `SUPABASE_DIRECT_URL` as a repository secret (Settings → Secrets and
+variables → Actions). `PG_BIN` in `.env.local` points at the PostgreSQL `bin`
+directory for local restores, since the Windows installer does not add it to
+PATH.
 
 ## Notes
 

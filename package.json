@@ -20,7 +20,10 @@
     "prices": "tsx scripts/fetch-prices.ts",
     "prices:supabase": "tsx scripts/fetch-prices.ts --target=supabase",
     "import": "tsx scripts/import-stockanalysis.ts",
-    "import:supabase": "tsx scripts/import-stockanalysis.ts --target=supabase"
+    "import:supabase": "tsx scripts/import-stockanalysis.ts --target=supabase",
+    "db:restore": "tsx scripts/restore-backup.ts",
+    "db:backup": "tsx scripts/backup-now.ts",
+    "db:backup:supabase": "tsx scripts/backup-now.ts --target=supabase"
   },
   "dependencies": {
     "dotenv": "^18.0.1",

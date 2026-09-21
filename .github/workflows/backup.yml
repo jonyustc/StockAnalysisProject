@@ -1,0 +1,121 @@
+name: Nightly database backup
+
+# Supabase's free plan has no automated backups, and their own documentation
+# says to export regularly and keep the copies off-platform. This does that.
+#
+# The dump is committed as plain SQL — not gzipped — to the orphan `backups`
+# branch. Plain text lets git delta-compress between days, so a year of nightly
+# snapshots costs far less than 365 separate archives, and every past version
+# stays recoverable through git history:
+#
+#   git show backups@{2026-08-01}:dump.sql > old.sql
+#
+# It runs after the price job so the day's closes are included, and doubles as
+# a second daily touch that keeps a free Supabase project from pausing.
+
+on:
+  schedule:
+    # 12:30 UTC = 18:30 Dhaka, after the 11:00 UTC price fetch.
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the backups branch
+        uses: actions/checkout@v4
+        with:
+          ref: backups
+          fetch-depth: 1
+
+      - name: Dump the database
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DIRECT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::SUPABASE_DIRECT_URL secret is not set."
+            exit 1
+          fi
+
+          # pg_dump refuses to run against a server newer than itself, and
+          # ubuntu-latest ships an older client than Supabase's Postgres 17.
+          # Pinning the image keeps this working when either side moves.
+          # --schema=public only. A full Supabase dump carries its own
+          # extensions (supabase_vault, pgsodium) and schemas (auth, storage,
+          # realtime), none of which exist on plain Postgres — so it fails to
+          # restore on exactly the machine you would restore to in an
+          # emergency. Verified by trying it.
+          docker run --rm postgres:17 pg_dump \
+            --no-owner --no-privileges --format=plain --schema=public \
+            "$DATABASE_URL" > dump.new.sql
+
+      - name: Refuse to overwrite a good backup with a bad one
+        run: |
+          # A truncated or empty dump that silently replaces a working one is
+          # worse than a failed job, because it looks like success.
+          size=$(wc -c < dump.new.sql)
+          echo "dump size: ${size} bytes"
+
+          if [ "$size" -lt 20000 ]; then
+            echo "::error::Dump is only ${size} bytes — refusing to commit it."
+            exit 1
+          fi
+
+          for table in companies financial_facts fiscal_periods line_item_defs daily_prices; do
+            if ! grep -q "CREATE TABLE public.${table}" dump.new.sql; then
+              echo "::error::Dump is missing table ${table} — refusing to commit it."
+              exit 1
+            fi
+          done
+
+          facts=$(sed -n '/^COPY public.financial_facts /,/^\\\.$/p' dump.new.sql | grep -c '' || true)
+          echo "financial_facts lines (incl. header/terminator): ${facts}"
+          if [ "$facts" -lt 50 ]; then
+            echo "::error::Only ${facts} fact rows in the dump — refusing to commit it."
+            exit 1
+          fi
+
+          mv dump.new.sql dump.sql
+
+      - name: Write the manifest
+        run: |
+          {
+            echo "# Backup manifest"
+            echo
+            echo "- Taken: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "- Source: Supabase (production)"
+            echo "- Size: $(wc -c < dump.sql) bytes"
+            echo
+            echo "## Row counts"
+            echo
+            for table in companies fiscal_periods financial_facts daily_prices corporate_actions source_documents research_notes; do
+              n=$(sed -n "/^COPY public.${table} /,/^\\\\\.\$/p" dump.sql | grep -c '' || echo 0)
+              # Subtract the COPY header and the terminating backslash-dot.
+              n=$(( n > 2 ? n - 2 : 0 ))
+              printf -- "- %s: %s\n" "$table" "$n"
+            done
+            echo
+            echo "Restore locally with: npm run db:restore"
+          } > MANIFEST.md
+
+      - name: Commit if anything changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- dump.sql; then
+            echo "No change in the data since the last backup."
+            exit 0
+          fi
+
+          git add dump.sql MANIFEST.md
+          git commit -m "Backup $(date -u '+%Y-%m-%d')"
+          git push
