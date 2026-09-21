@@ -2,8 +2,18 @@ import 'server-only'
 
 import { and, asc, eq, sql } from 'drizzle-orm'
 
+import type { CorporateActionInput } from '@/lib/corporate-actions'
+
 import { db } from './client'
-import { companies, financialFacts, fiscalPeriods, lineItemDefs, sectors, sourceDocuments } from './schema'
+import {
+  companies,
+  corporateActions,
+  financialFacts,
+  fiscalPeriods,
+  lineItemDefs,
+  sectors,
+  sourceDocuments,
+} from './schema'
 
 export async function listTrackedCompanies() {
   return db
@@ -164,11 +174,13 @@ export async function getFactHistory(
 
   const byYear = new Map<number, Record<string, number | null>>()
   let unverified = 0
+  let disputed = 0
 
   for (const row of rows) {
     if (!byYear.has(row.fiscalYear)) byYear.set(row.fiscalYear, {})
     byYear.get(row.fiscalYear)![row.tag] = row.valueBase === null ? null : Number(row.valueBase)
     if (row.verification === 'unverified') unverified += 1
+    if (row.verification === 'disputed') disputed += 1
   }
 
   return {
@@ -177,6 +189,7 @@ export async function getFactHistory(
       .sort((a, b) => a.fiscalYear - b.fiscalYear),
     factCount: rows.length,
     unverifiedCount: unverified,
+    disputedCount: disputed,
   }
 }
 
@@ -255,6 +268,52 @@ export async function getAllFactHistories(basis: 'consolidated' | 'standalone' =
         .sort((a, b) => a.fiscalYear - b.fiscalYear),
     ]),
   )
+}
+
+/**
+ * Corporate actions per company symbol, shaped for the adjustment layer.
+ *
+ * Fetched for every company at once — there are only a handful of rows, and
+ * the alternative is a query per company on the screener.
+ */
+export async function getCorporateActionsBySymbol() {
+  const rows = await db
+    .select({
+      dseSymbol: companies.dseSymbol,
+      actionType: corporateActions.actionType,
+      exDate: corporateActions.exDate,
+      stockDividendPct: corporateActions.stockDividendPct,
+      rightsNewShares: corporateActions.rightsNewShares,
+      rightsPerExisting: corporateActions.rightsPerExisting,
+      rightsPrice: corporateActions.rightsPrice,
+      cumRightsPrice: corporateActions.cumRightsPrice,
+      splitFrom: corporateActions.splitFrom,
+      splitTo: corporateActions.splitTo,
+    })
+    .from(corporateActions)
+    .innerJoin(companies, eq(companies.id, corporateActions.companyId))
+    .orderBy(asc(corporateActions.exDate))
+
+  const bySymbol = new Map<string, CorporateActionInput[]>()
+
+  for (const row of rows) {
+    const action: CorporateActionInput = {
+      actionType: row.actionType,
+      exDate: row.exDate,
+      stockDividendPct: row.stockDividendPct === null ? null : Number(row.stockDividendPct),
+      rightsNewShares: row.rightsNewShares,
+      rightsPerExisting: row.rightsPerExisting,
+      rightsPrice: row.rightsPrice === null ? null : Number(row.rightsPrice),
+      cumRightsPrice: row.cumRightsPrice === null ? null : Number(row.cumRightsPrice),
+      splitFrom: row.splitFrom,
+      splitTo: row.splitTo,
+    }
+
+    if (!bySymbol.has(row.dseSymbol)) bySymbol.set(row.dseSymbol, [])
+    bySymbol.get(row.dseSymbol)!.push(action)
+  }
+
+  return bySymbol
 }
 
 export async function listSourceDocuments(companyId: number) {

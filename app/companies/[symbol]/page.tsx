@@ -2,9 +2,19 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
-import { getCompanyBySymbol, getFactHistory, getLatestQuotes } from '@/db/queries'
-import { fiscalYearRangeLabel } from '@/lib/fiscal'
-import { computeHistory, summariseHistory, totalDebt } from '@/lib/metrics'
+import {
+  getCompanyBySymbol,
+  getCorporateActionsBySymbol,
+  getFactHistory,
+  getLatestQuotes,
+} from '@/db/queries'
+import { fiscalYearBounds, fiscalYearRangeLabel } from '@/lib/fiscal'
+import {
+  adjustForCorporateActions,
+  computeHistory,
+  summariseHistory,
+  totalDebt,
+} from '@/lib/metrics'
 import { computeValuation } from '@/lib/prices'
 import { formatBDT, formatPercent, formatPerShare, formatRatio } from '@/lib/units'
 
@@ -20,11 +30,19 @@ export default async function CompanyPage({
   if (!company) notFound()
 
   const fye = { month: company.fiscalYearEndMonth, day: company.fiscalYearEndDay }
-  const [{ years, factCount, unverifiedCount }, quotes] = await Promise.all([
-    getFactHistory(company.id),
-    getLatestQuotes(),
-  ])
+  const [{ years: reported, factCount, unverifiedCount, disputedCount }, quotes, actionsBySymbol] =
+    await Promise.all([getFactHistory(company.id), getLatestQuotes(), getCorporateActionsBySymbol()])
+
   const quote = quotes.get(company.dseSymbol)
+  const actions = actionsBySymbol.get(company.dseSymbol) ?? []
+
+  // Restate per-share figures onto today's share base before anything is
+  // computed from them. Without this, a bonus or rights issue makes EPS growth
+  // and EPS CAGR wrong in the flattering direction.
+  const periodEnds = new Map(
+    reported.map((year) => [year.fiscalYear, fiscalYearBounds(fye, year.fiscalYear).end]),
+  )
+  const years = adjustForCorporateActions(reported, actions, periodEnds)
 
   const metrics = computeHistory(years)
   const summary = summariseHistory(years, metrics)
@@ -64,6 +82,12 @@ export default async function CompanyPage({
               ? `${years.length} years entered · ${fiscalYearRangeLabel(fye, latest.fiscalYear)}`
               : 'No data entered yet'}
           </p>
+          {/* What is known about this company's data — year end, corporate
+              actions, known source errors. It was only on the entry page
+              before, which is not where anyone reads the numbers. */}
+          {company.notes ? (
+            <p className="mt-2 max-w-2xl text-xs text-neutral-600">{company.notes}</p>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-6">
@@ -109,6 +133,30 @@ export default async function CompanyPage({
               unverified.</strong>{' '}
               They have not been checked against a primary source, so treat everything below as
               provisional.
+            </p>
+          ) : null}
+
+          {/* A figure known to be doubtful is more useful than a hole, but
+              only if nothing lets you forget it is doubtful. */}
+          {disputedCount > 0 ? (
+            <p className="rounded border border-red-900/60 bg-red-950/30 px-4 py-2.5 text-xs text-red-200/80">
+              <strong className="font-medium">
+                {disputedCount} figure{disputedCount === 1 ? ' is' : 's are'} disputed.
+              </strong>{' '}
+              They contradict other reported figures and are shown only so the conflict stays
+              visible. Do not rely on any metric derived from them.
+            </p>
+          ) : null}
+
+          {actions.length > 0 ? (
+            <p className="rounded border border-sky-900/60 bg-sky-950/30 px-4 py-2.5 text-xs text-sky-200/80">
+              <strong className="font-medium">
+                Per-share figures are adjusted for {actions.length} corporate action
+                {actions.length === 1 ? '' : 's'}.
+              </strong>{' '}
+              EPS, NAVPS and dividend per share for years before the issue are restated onto the
+              current share base, so growth rates compare like with like. Reported figures are
+              unchanged in the database.
             </p>
           ) : null}
 

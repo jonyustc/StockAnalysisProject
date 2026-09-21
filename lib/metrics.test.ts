@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { computeHistory, computeYearMetrics, summariseHistory, type YearFacts } from './metrics'
+import {
+  adjustForCorporateActions,
+  computeHistory,
+  computeYearMetrics,
+  summariseHistory,
+  type YearFacts,
+} from './metrics'
 
 const M = 1_000_000
 
@@ -146,5 +152,53 @@ describe('summariseHistory', () => {
   it('reports no CAGR for a single year', () => {
     const single = summariseHistory([FY2025], computeHistory([FY2025]))
     assert.equal(single.revenueCagr, null)
+  })
+})
+
+describe('adjustForCorporateActions', () => {
+  const periodEnds = new Map([
+    [2024, '2024-03-31'],
+    [2025, '2025-03-31'],
+    [2026, '2026-03-31'],
+  ])
+
+  // Berger's real case: 1-for-17 rights issue with an ex-date inside FY2026.
+  const rights = [
+    { actionType: 'rights_issue' as const, exDate: '2025-04-01', rightsNewShares: 1, rightsPerExisting: 17 },
+  ]
+
+  const years = [
+    { fiscalYear: 2024, values: { eps_basic: 69.92, navps: 309.53, revenue: 26251 } },
+    { fiscalYear: 2025, values: { eps_basic: 71.2, navps: 333.42, revenue: 28525 } },
+    { fiscalYear: 2026, values: { eps_basic: 76.83, navps: 400.24, revenue: 29270 } },
+  ]
+
+  const adjusted = adjustForCorporateActions(years, rights, periodEnds)
+
+  it('restates years before the action onto the larger share base', () => {
+    const factor = 17 / 18
+    assert.ok(Math.abs(adjusted[0].values.eps_basic! - 69.92 * factor) < 1e-9)
+    assert.ok(Math.abs(adjusted[1].values.eps_basic! - 71.2 * factor) < 1e-9)
+  })
+
+  it('leaves the year the action falls in untouched', () => {
+    // FY2026 ends after the ex-date, so its reported EPS is already post-issue.
+    assert.equal(adjusted[2].values.eps_basic, 76.83)
+  })
+
+  it('does not touch amounts, only per-share lines', () => {
+    assert.equal(adjusted[0].values.revenue, 26251)
+    assert.ok(adjusted[0].values.navps! < 309.53)
+  })
+
+  it('changes the EPS growth rate it is computed from', () => {
+    // The whole point: unadjusted growth into FY2026 is overstated.
+    const raw = computeHistory(years)
+    const fixed = computeHistory(adjusted)
+    assert.ok(fixed.at(-1)!.epsGrowth! > raw.at(-1)!.epsGrowth!)
+  })
+
+  it('is a no-op with no actions', () => {
+    assert.equal(adjustForCorporateActions(years, [], periodEnds), years)
   })
 })

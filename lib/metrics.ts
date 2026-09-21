@@ -13,7 +13,14 @@
  *   2. Currency inputs are base BDT; per-share inputs are as reported.
  */
 
-import { cagr } from './corporate-actions'
+import {
+  cagr,
+  cumulativeAdjustmentFactor,
+  type CorporateActionInput,
+} from './corporate-actions'
+
+/** Per-share tags that a bonus, rights issue or split makes incomparable. */
+const PER_SHARE_TAGS = ['eps_basic', 'eps_diluted', 'navps', 'nocfps', 'dividend_per_share']
 
 /** Reported values for one fiscal year, keyed by line item tag. */
 export interface YearFacts {
@@ -120,6 +127,44 @@ export function computeYearMetrics(year: YearFacts, previous?: YearFacts): YearM
 export function computeHistory(years: YearFacts[]): YearMetrics[] {
   const ordered = [...years].sort((a, b) => a.fiscalYear - b.fiscalYear)
   return ordered.map((year, index) => computeYearMetrics(year, ordered[index - 1]))
+}
+
+/**
+ * Restates per-share figures onto the current share base.
+ *
+ * A bonus or rights issue increases the share count without changing the
+ * business, so an EPS reported before it is not comparable with one reported
+ * after. Growth rates and CAGRs computed across that break are wrong — and
+ * wrong in the flattering direction, since the share count almost always
+ * grows.
+ *
+ * Each year is adjusted by the product of the factors for every action that
+ * went ex AFTER that year ended; an action already reflected in a reported
+ * figure must not be applied twice. Amounts are untouched — only per-share
+ * lines move.
+ */
+export function adjustForCorporateActions(
+  years: YearFacts[],
+  actions: (CorporateActionInput & { periodEndByYear?: never })[],
+  periodEndByYear: Map<number, string>,
+): YearFacts[] {
+  if (actions.length === 0) return years
+
+  return years.map((year) => {
+    const asOf = periodEndByYear.get(year.fiscalYear)
+    if (!asOf) return year
+
+    const factor = cumulativeAdjustmentFactor(actions, asOf)
+    if (factor === 1) return year
+
+    const values = { ...year.values }
+    for (const tag of PER_SHARE_TAGS) {
+      const value = values[tag]
+      if (value !== null && value !== undefined) values[tag] = value * factor
+    }
+
+    return { fiscalYear: year.fiscalYear, values }
+  })
 }
 
 export interface HistorySummary {
