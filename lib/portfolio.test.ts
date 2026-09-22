@@ -8,6 +8,7 @@ import {
   costTimeline,
   freeSharePlan,
   simulateTrade,
+  tradingStats,
   mergeBySymbol,
   xirr,
   type PortfolioTransaction,
@@ -547,5 +548,27 @@ describe('simulateTrade', () => {
   it('refuses to sell more than is held', () => {
     const r = simulateTrade(position, { sellQty: 101, sellPrice: 1, buyQty: 0, buyPrice: 0, commissionRate: 0 })
     assert.match(r.invalid ?? '', /100 held/)
+  })
+})
+
+describe('tradingStats', () => {
+  const stats = tradingStats([
+    txn({ tradeDate: '2025-01-01', quantity: 100, pricePerShare: 100, commission: 40 }),
+    txn({ tradeDate: '2025-02-01', txnType: 'sell', quantity: 50, pricePerShare: 120, commission: 24 }),
+    txn({ tradeDate: '2025-03-01', txnType: 'sell', quantity: 50, pricePerShare: 90, commission: 18 }),
+  ])
+
+  it('scores each sale against average cost, commission both ways', () => {
+    // Average cost 100.40. First: 6,000 − 24 − 5,020 = 956. Second: 4,500 − 18 − 5,020 = −538.
+    assert.deepEqual(stats.sales.map((s) => Math.round(s.gain)), [-538, 956])
+    assert.equal(stats.wins, 1)
+    assert.equal(stats.winRate, 0.5)
+    assert.equal(Math.round(stats.realised), 418)
+  })
+
+  it('adds up commission and turnover', () => {
+    assert.equal(stats.commission, 82)
+    assert.equal(stats.turnover, 10000 + 6000 + 4500)
+    assert.deepEqual(stats.bySymbol.map((b) => [b.symbol, b.buys, b.sells]), [['SQURPHARMA', 1, 2]])
   })
 })

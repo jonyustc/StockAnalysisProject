@@ -612,3 +612,88 @@ export function simulateTrade(
     invalid: null,
   }
 }
+
+export interface Sale {
+  date: string
+  symbol: string
+  accountName: string | null
+  quantity: number
+  proceeds: number
+  /** Against the average cost at the time, after commission both ways. */
+  gain: number
+}
+
+export interface TradingStats {
+  sales: Sale[]
+  wins: number
+  losses: number
+  /** Share of sales that made money. Null with no sales. */
+  winRate: number | null
+  realised: number
+  commission: number
+  /** Everything bought and sold, at trade value. */
+  turnover: number
+  bySymbol: { symbol: string; buys: number; sells: number; realised: number; commission: number }[]
+}
+
+/**
+ * How the trading has gone: each sale's gain, and what commission cost.
+ *
+ * A sale's gain is the change it makes to the position's realised gain —
+ * computed by buildHolding before and after it, so it follows exactly the
+ * same costing rules as everything else.
+ */
+export function tradingStats(transactions: PortfolioTransaction[]): TradingStats {
+  const groups = new Map<string, PortfolioTransaction[]>()
+  for (const t of transactions) {
+    const key = `${t.accountId}|${t.symbol}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(t)
+  }
+
+  const sales: Sale[] = []
+  for (const txns of groups.values()) {
+    const ordered = [...txns].sort(chronological)
+    let realisedBefore = 0
+    ordered.forEach((t, i) => {
+      if (t.txnType !== 'sell') return
+      const realisedAfter = buildHolding(t.symbol, ordered.slice(0, i + 1), null).realisedGain
+      sales.push({
+        date: t.tradeDate,
+        symbol: t.symbol,
+        accountName: t.accountName ?? null,
+        quantity: t.quantity ?? 0,
+        proceeds: (t.quantity ?? 0) * (t.pricePerShare ?? 0) - t.commission,
+        gain: realisedAfter - realisedBefore,
+      })
+      realisedBefore = realisedAfter
+    })
+  }
+  sales.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+
+  const trades = transactions.filter((t) => t.txnType === 'buy' || t.txnType === 'sell' || t.txnType === 'rights')
+  const symbols = [...new Set(trades.map((t) => t.symbol))]
+  const wins = sales.filter((s) => s.gain > 0).length
+
+  return {
+    sales,
+    wins,
+    losses: sales.filter((s) => s.gain < 0).length,
+    winRate: sales.length > 0 ? wins / sales.length : null,
+    realised: sales.reduce((s, x) => s + x.gain, 0),
+    commission: trades.reduce((s, t) => s + t.commission, 0),
+    turnover: trades.reduce((s, t) => s + (t.quantity ?? 0) * (t.pricePerShare ?? 0), 0),
+    bySymbol: symbols
+      .map((symbol) => {
+        const own = trades.filter((t) => t.symbol === symbol)
+        return {
+          symbol,
+          buys: own.filter((t) => t.txnType !== 'sell').length,
+          sells: own.filter((t) => t.txnType === 'sell').length,
+          realised: sales.filter((s) => s.symbol === symbol).reduce((s, x) => s + x.gain, 0),
+          commission: own.reduce((s, t) => s + t.commission, 0),
+        }
+      })
+      .sort((a, b) => b.realised - a.realised),
+  }
+}

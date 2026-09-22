@@ -16,6 +16,8 @@
  *     withdrawal totals too, and are excluded for the same reason.
  */
 
+import { MIN_DAYS_TO_ANNUALISE, xirr } from './portfolio'
+
 export interface AccountSnapshot {
   asOf: string
   /** Holdings at market. */
@@ -236,4 +238,39 @@ export function sinceFirstSnapshot(snapshots: AccountSnapshot[]): {
   const from = ordered[0].asOf
   const to = ordered[ordered.length - 1].asOf
   return { return: growth - 1, from, to, days: Math.round((Date.parse(to) - Date.parse(from)) / DAY) }
+}
+
+export interface DatedFlow {
+  date: string
+  kind: 'deposit' | 'withdrawal' | 'fee' | 'dividend' | 'ipo' | 'other'
+  /** Signed as the account sees it: positive into the account. */
+  amount: number
+}
+
+/**
+ * Money-weighted annual return of an account, from the day each deposit and
+ * withdrawal actually happened — the personal rate of return on the money
+ * you put in.
+ *
+ * Only money crossing the boundary between you and the account counts:
+ * deposits and withdrawals. Fees and dividends happen inside the account;
+ * they are already in what it is worth. Null under a year of history, for
+ * the same reason as everywhere else: annualising a few months compounds
+ * noise into nonsense.
+ */
+export function accountMoneyWeightedReturn(
+  flows: DatedFlow[],
+  worth: number,
+  asOf: string,
+): { rate: number | null; firstDate: string | null; days: number } {
+  const external = flows.filter((f) => f.kind === 'deposit' || f.kind === 'withdrawal')
+  const firstDate = external.map((f) => f.date).sort()[0] ?? null
+  const days = firstDate ? Math.round((Date.parse(asOf) - Date.parse(firstDate)) / DAY) : 0
+
+  if (!firstDate || days < MIN_DAYS_TO_ANNUALISE) return { rate: null, firstDate, days }
+
+  // Your side of each flow: a deposit is money leaving you.
+  const cashflows = external.map((f) => ({ date: f.date, amount: -f.amount }))
+  cashflows.push({ date: asOf, amount: worth })
+  return { rate: xirr(cashflows), firstDate, days }
 }

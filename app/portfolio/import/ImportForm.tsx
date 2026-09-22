@@ -6,8 +6,10 @@ import {
   applyStatement,
   previewStatement,
   type ApplyResult,
+  type ImportPreview,
   type StatementPreview,
 } from './actions'
+import { DividendReportReview, LedgerReview, PnlReview } from './ReportReviews'
 
 const KIND: Record<string, { label: string; className: string }> = {
   opening: { label: 'new position', className: 'text-sky-400' },
@@ -23,10 +25,14 @@ function taka(value: number | null | undefined): string {
 }
 
 export function ImportForm() {
-  const [preview, previewAction, reading] = useActionState<StatementPreview | null, FormData>(
+  const [result, previewAction, reading] = useActionState<ImportPreview | null, FormData>(
     previewStatement,
     null,
   )
+  // Ledgers and reports have their own review; a portfolio statement uses the
+  // one below.
+  const report = result?.ok && result.kind && result.kind !== 'portfolio' ? result : null
+  const preview = report ? null : (result as StatementPreview | null)
   const [applied, applyAction, applying] = useActionState<ApplyResult | null, FormData>(
     applyStatement,
     null,
@@ -70,10 +76,15 @@ export function ImportForm() {
           {reading ? 'Reading…' : 'Read statement'}
         </button>
         <p className="w-full text-xs text-neutral-600">
-          Nothing is recorded yet — this only compares. The PDF is read in memory and discarded;
-          it is never stored.
+          A portfolio statement, client ledger, cash dividend ledger or profit/loss analysis —
+          which one is worked out from the PDF itself. Nothing is recorded yet: this only
+          compares. The PDF is read in memory and discarded; it is never stored.
         </p>
       </form>
+
+      {report?.kind === 'ledger' ? <LedgerReview key={report.message + report.header.to} preview={report} /> : null}
+      {report?.kind === 'dividends' ? <DividendReportReview key={report.message} preview={report} /> : null}
+      {report?.kind === 'pnl' ? <PnlReview preview={report} /> : null}
 
       {preview && !preview.ok ? (
         <p className="rounded border border-red-900/60 bg-red-950/30 px-4 py-2.5 text-sm text-red-300">

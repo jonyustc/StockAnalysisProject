@@ -781,3 +781,37 @@ export const accountSnapshots = pgTable(
     index('account_snapshots_account_idx').on(t.boAccountId, t.asOf),
   ],
 )
+
+/* -------------------------------------------------------------------------- */
+/* cash_movements                                                              */
+/* -------------------------------------------------------------------------- */
+
+export const cashMovementKind = pgEnum('cash_movement_kind', [
+  'deposit',
+  'withdrawal',
+  'fee',
+  'dividend',
+  'ipo',
+  'other',
+])
+
+/**
+ * Money in and out of a BO account without shares, on the day it moved.
+ * Signed: positive into the account.
+ */
+export const cashMovements = pgTable(
+  'cash_movements',
+  {
+    id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+    boAccountId: smallint('bo_account_id')
+      .notNull()
+      .references(() => boAccounts.id, { onDelete: 'cascade' }),
+    movementDate: date('movement_date').notNull(),
+    kind: cashMovementKind('kind').notNull(),
+    amount: numeric('amount', { precision: 20, scale: 2 }).notNull(),
+    description: text('description'),
+    source: text('source').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('cash_movements_account_idx').on(t.boAccountId, t.movementDate)],
+)

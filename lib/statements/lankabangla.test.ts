@@ -294,9 +294,11 @@ const realFiles = existsSync(STATEMENTS)
 
 describe('real statements (local only)', { skip: realFiles.length === 0 }, () => {
   for (const file of realFiles) {
-    it(`${file} parses cleanly`, async () => {
+    it(`${file} parses cleanly, if it is a portfolio statement`, async () => {
       const { extractTextItems } = await import('./extract')
+      const { detectDocument } = await import('./detect')
       const items = await extractTextItems(new Uint8Array(readFileSync(join(STATEMENTS, file))))
+      if (detectDocument(items) !== 'portfolio') return
       const result = parseLankaBanglaPortfolio(items)
 
       assert.equal(result.ok, true, result.ok ? '' : result.reason)

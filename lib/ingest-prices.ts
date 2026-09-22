@@ -65,7 +65,12 @@ export async function ingestDailyPrices(client: Queryable): Promise<IngestSummar
 
   try {
     const { rows: companyRows } = await client.query(
-      `SELECT id, dse_symbol FROM companies WHERE is_tracked AND is_active ORDER BY dse_symbol`,
+      // Researched companies, plus any in the portfolio ledger: a holding in a
+      // company with no fundamentals entered still needs a price.
+      `SELECT id, dse_symbol FROM companies
+        WHERE is_active
+          AND (is_tracked OR id IN (SELECT company_id FROM portfolio_transactions))
+        ORDER BY dse_symbol`,
     )
 
     if (companyRows.length === 0) {

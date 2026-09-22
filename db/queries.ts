@@ -7,6 +7,7 @@ import type { CorporateActionInput } from '@/lib/corporate-actions'
 import { db } from './client'
 import {
   accountSnapshots,
+  cashMovements,
   boAccounts,
   companies,
   corporateActions,
@@ -454,4 +455,23 @@ export async function listCompanyNames() {
   return db
     .select({ symbol: companies.dseSymbol, name: companies.name, shortName: companies.shortName })
     .from(companies)
+}
+
+/** Every dated cash movement, oldest first. */
+export async function listCashMovements() {
+  const rows = await db
+    .select({
+      id: cashMovements.id,
+      accountId: cashMovements.boAccountId,
+      accountName: boAccounts.name,
+      date: cashMovements.movementDate,
+      kind: cashMovements.kind,
+      amount: cashMovements.amount,
+      description: cashMovements.description,
+    })
+    .from(cashMovements)
+    .innerJoin(boAccounts, eq(boAccounts.id, cashMovements.boAccountId))
+    .orderBy(asc(cashMovements.movementDate), asc(cashMovements.id))
+
+  return rows.map((row) => ({ ...row, amount: Number(row.amount) }))
 }

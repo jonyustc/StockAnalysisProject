@@ -47,7 +47,7 @@ export function parseStatementDate(value: string): string | null {
   return `${match[3]}-${month}-${day}`
 }
 
-interface Row {
+export interface Row {
   y: number
   page: number
   cells: TextItem[]

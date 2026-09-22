@@ -79,9 +79,10 @@ export function AccountFilter({
 }
 
 /** The portfolio section tabs. */
-export function PortfolioNav({ current }: { current: 'holdings' | 'dividends' | 'cash' }) {
+export function PortfolioNav({ current }: { current: 'holdings' | 'trading' | 'dividends' | 'cash' }) {
   const tabs = [
     { key: 'holdings', href: '/portfolio', label: 'Holdings' },
+    { key: 'trading', href: '/portfolio/trading', label: 'Trading' },
     { key: 'dividends', href: '/portfolio/dividends', label: 'Dividends' },
     { key: 'cash', href: '/portfolio/cash', label: 'Cash & withdrawals' },
   ] as const

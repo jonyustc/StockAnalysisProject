@@ -10,14 +10,14 @@ import { getDocumentProxy } from 'unpdf'
 
 import type { TextItem } from './types'
 
-/** Statements are a page or two. Anything larger is not what it claims to be. */
-export const MAX_PAGES = 20
+/** A statement is a page or two; a year of ledger, a few dozen. Beyond that it is not what it claims to be. */
+export const MAX_PAGES = 60
 
 export async function extractTextItems(bytes: Uint8Array): Promise<TextItem[]> {
   const pdf = await getDocumentProxy(bytes)
 
   if (pdf.numPages > MAX_PAGES) {
-    throw new Error(`PDF has ${pdf.numPages} pages; a portfolio statement should have a few.`)
+    throw new Error(`PDF has ${pdf.numPages} pages; a broker statement or ledger should have far fewer.`)
   }
 
   const items: TextItem[] = []

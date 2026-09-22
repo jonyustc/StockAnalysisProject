@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  accountMoneyWeightedReturn,
   cashMovements,
   lifetimeReturn,
   netContributions,
@@ -182,5 +183,27 @@ describe('sinceFirstSnapshot', () => {
     const r = sinceFirstSnapshot([snap({ asOf: '2026-09-22', deposit: 1, marketValue: 1 })])
     assert.equal(r.return, null)
     assert.equal(r.days, 0)
+  })
+})
+
+describe('accountMoneyWeightedReturn', () => {
+  it('uses the real dates of deposits, and ignores fees and dividends', () => {
+    const r = accountMoneyWeightedReturn(
+      [
+        { date: '2025-01-01', kind: 'deposit', amount: 1000 },
+        { date: '2025-06-01', kind: 'fee', amount: -10 },
+        { date: '2025-07-01', kind: 'dividend', amount: 20 },
+      ],
+      1100,
+      '2026-01-01',
+    )
+    assert.ok(close(r.rate, 0.1, 1e-4))
+    assert.equal(r.days, 365)
+  })
+
+  it('waits for a year of history', () => {
+    const r = accountMoneyWeightedReturn([{ date: '2025-10-06', kind: 'deposit', amount: 1000 }], 1040, '2026-09-22')
+    assert.equal(r.rate, null)
+    assert.equal(r.firstDate, '2025-10-06')
   })
 })

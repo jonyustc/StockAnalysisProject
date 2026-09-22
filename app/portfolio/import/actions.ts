@@ -16,14 +16,36 @@ import {
 import { buildPortfolio, type PortfolioTransaction } from '@/lib/portfolio'
 import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { extractTextItems, looksScanned } from '@/lib/statements/extract'
+import { detectDocument } from '@/lib/statements/detect'
 import { parseLankaBanglaPortfolio } from '@/lib/statements/lankabangla'
+import type { PlannedDividend } from '@/lib/statements/plan'
 import { reconcile, type Suggestion } from '@/lib/statements/reconcile'
 import type { ParsedStatement } from '@/lib/statements/types'
+
+import {
+  applyDividends,
+  applyLedger,
+  previewDividendReport,
+  previewLedger,
+  previewPnl,
+  resolveAccount,
+  validLedgerPlan,
+  type DividendReportPreview,
+  type LedgerPreview,
+  type PnlPreview,
+} from './reports'
 
 /** Well above a real statement (~65 KB), well below the action body limit. */
 const MAX_BYTES = 3 * 1024 * 1024
 
+export type ImportPreview =
+  | StatementPreview
+  | LedgerPreview
+  | DividendReportPreview
+  | PnlPreview
+
 export interface StatementPreview {
+  kind?: 'portfolio'
   ok: boolean
   message: string
   statement?: Omit<ParsedStatement, 'boId'> & { boIdLast4: string | null }
@@ -103,9 +125,9 @@ function snapshotFrom(
  * written to disk, to the database, or to storage.
  */
 export async function previewStatement(
-  _previous: StatementPreview | null,
+  _previous: ImportPreview | null,
   formData: FormData,
-): Promise<StatementPreview> {
+): Promise<ImportPreview> {
   if (!(await hasSession())) return NOT_SIGNED_IN
 
   const file = formData.get('statement')
@@ -134,6 +156,20 @@ export async function previewStatement(
     return {
       ok: false,
       message: 'This PDF has no text layer — it looks like a scan. Only statements your broker generates as text can be read reliably.',
+    }
+  }
+
+  // Ledgers and reports have their own previews; a portfolio statement is
+  // handled below.
+  const kind = detectDocument(items)
+  if (kind === 'ledger') return previewLedger(items)
+  if (kind === 'dividends') return previewDividendReport(items)
+  if (kind === 'pnl') return previewPnl(items)
+  if (kind === null) {
+    return {
+      ok: false,
+      message:
+        'Not a document this can read. It reads LankaBangla portfolio statements, client ledgers, cash dividend ledgers and profit/loss analyses.',
     }
   }
 
@@ -564,5 +600,112 @@ export async function applyStatement(
   revalidatePath('/portfolio/import')
   revalidatePath('/portfolio/dividends')
 
+  return result
+}
+
+function revalidatePortfolio() {
+  for (const path of ['/portfolio', '/portfolio/transactions', '/portfolio/import', '/portfolio/dividends', '/portfolio/cash']) {
+    revalidatePath(path)
+  }
+}
+
+/**
+ * Record a broker ledger's trades and cash movements. The plan comes back
+ * from the preview, since the PDF is never kept; it is re-validated here, and
+ * written only if the account's trades are still what the preview saw.
+ */
+export async function applyLedgerImport(
+  _previous: ApplyResult | null,
+  formData: FormData,
+): Promise<ApplyResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  const from = String(formData.get('from') ?? '')
+  const to = String(formData.get('to') ?? '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    return { ok: false, message: 'Missing the ledger period.' }
+  }
+
+  let plan: LedgerPreview['plan']
+  try {
+    plan = JSON.parse(String(formData.get('plan') ?? ''))
+  } catch {
+    return { ok: false, message: 'The import plan could not be read. Upload the ledger again.' }
+  }
+  const invalid = validLedgerPlan(plan, from, to)
+  if (invalid) return { ok: false, message: `${invalid} Upload the ledger again.` }
+  if (Array.isArray(plan.blockers) && plan.blockers.length > 0) {
+    return { ok: false, message: 'This ledger has problems that stop it being imported.' }
+  }
+
+  const broker = String(formData.get('broker') ?? '').trim() || null
+  const source = `${broker ?? 'broker'} ledger ${from} to ${to}`
+
+  const result = await db.transaction(async (tx) => {
+    const account = await resolveAccount(tx, formData, broker, source)
+    if ('error' in account) return { ok: false, message: account.error }
+
+    const outcome = await applyLedger(
+      tx,
+      account.id,
+      { from, to, trades: plan.trades, cash: plan.cash },
+      plan.replaced.map((r) => Number(r.id)),
+      source,
+    )
+    // Nothing half-written: a refusal rolls the account creation back too.
+    if (!outcome.ok) tx.rollback()
+    return { ok: outcome.ok, message: `${account.name}: ${outcome.message}` }
+  }).catch((error: unknown) => {
+    if (error instanceof Error && /rollback/i.test(error.message)) {
+      return { ok: false, message: 'The account’s trades changed since the preview. Upload the ledger again.' }
+    }
+    throw error
+  })
+
+  revalidatePortfolio()
+  return result
+}
+
+/** Record the dividends ticked from a broker's dividend report. */
+export async function applyDividendReport(
+  _previous: ApplyResult | null,
+  formData: FormData,
+): Promise<ApplyResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  const accountId = Number(formData.get('accountId'))
+  if (!Number.isInteger(accountId) || accountId <= 0) return { ok: false, message: 'Missing the account.' }
+
+  let dividends: PlannedDividend[]
+  try {
+    dividends = JSON.parse(String(formData.get('dividends') ?? '[]'))
+  } catch {
+    return { ok: false, message: 'The dividend list could not be read. Upload the report again.' }
+  }
+  const ticked = new Set(formData.getAll('dividend').map(String))
+  dividends = dividends.filter((d) => ticked.has(d.key) && !d.recorded)
+  if (dividends.length === 0) return { ok: false, message: 'Nothing was ticked, so nothing was recorded.' }
+
+  for (const d of dividends) {
+    if (
+      typeof d.symbol !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(String(d.date)) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(String(d.recordDate)) ||
+      !(typeof d.gross === 'number' && d.gross > 0) ||
+      !(typeof d.taxWithheld === 'number' && d.taxWithheld >= 0 && d.taxWithheld <= d.gross)
+    ) {
+      return { ok: false, message: `Bad figures for ${d.companyName}.` }
+    }
+  }
+
+  const broker = String(formData.get('broker') ?? '').trim() || 'broker'
+  const result = await db.transaction(async (tx) => {
+    const [account] = await tx.select({ id: boAccounts.id, name: boAccounts.name }).from(boAccounts).where(eq(boAccounts.id, accountId)).limit(1)
+    if (!account) return { ok: false, message: 'That BO account no longer exists.' }
+    const outcome = await applyDividends(tx, account.id, dividends, `${broker} cash dividend report`)
+    return { ok: outcome.ok, message: `${account.name}: ${outcome.message}` }
+  })
+
+  revalidatePortfolio()
   return result
 }
