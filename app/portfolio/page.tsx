@@ -6,7 +6,7 @@ import {
   listBoAccounts,
   listPortfolioTransactions,
 } from '@/db/queries'
-import { buildPortfolio } from '@/lib/portfolio'
+import { buildPortfolio, MIN_DAYS_TO_ANNUALISE } from '@/lib/portfolio'
 import { PRICE_SOURCE_NAME } from '@/lib/prices'
 import { assessFreshness, formatTradeDate, type Freshness } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
@@ -133,7 +133,11 @@ export default async function PortfolioPage({
             <Stat
               label="XIRR"
               value={formatPercent(portfolio.xirr, 1)}
-              sub="money-weighted"
+              sub={
+                portfolio.xirr === null && portfolio.historyDays < MIN_DAYS_TO_ANNUALISE
+                  ? `needs a year of history (${portfolio.historyDays} day${portfolio.historyDays === 1 ? '' : 's'} so far)`
+                  : 'money-weighted, annual'
+              }
               tone={portfolio.xirr === null ? undefined : portfolio.xirr >= 0 ? 'good' : 'bad'}
             />
           </section>

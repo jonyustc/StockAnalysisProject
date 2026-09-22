@@ -270,9 +270,21 @@ export interface PortfolioSummary {
   totalDividendsNet: number
   /** Share of market value in the largest position. */
   largestWeight: number | null
-  /** Money-weighted return across every cash flow. Null when undefined. */
+  /**
+   * Money-weighted annual return across every cash flow. Null when undefined,
+   * and deliberately null when there is under a year of history.
+   */
   xirr: number | null
+  /** Days from the first recorded cash flow to the valuation date. */
+  historyDays: number
 }
+
+/**
+ * Below this, an annual rate is not reported. Annualising a short period
+ * compounds noise into nonsense: a 0.5% move over one day is an "annual
+ * return" of 524%.
+ */
+export const MIN_DAYS_TO_ANNUALISE = 365
 
 /**
  * @param accountId  restrict to one BO account; omit for every account.
@@ -340,6 +352,9 @@ export function buildPortfolio(
     .map((txn) => ({ date: txn.tradeDate, amount: cashFlowOf(txn) }))
     .filter((f) => f.amount !== 0)
 
+  const firstFlow = flows.map((f) => f.date).sort()[0]
+  const historyDays = firstFlow ? Math.floor((asOf.getTime() - Date.parse(firstFlow)) / DAY) : 0
+
   if (totalMarketValue > 0) {
     flows.push({ date: asOf.toISOString().slice(0, 10), amount: totalMarketValue })
   }
@@ -359,7 +374,8 @@ export function buildPortfolio(
       totalMarketValue > 0
         ? Math.max(...holdings.map((h) => (h.marketValue ?? 0) / totalMarketValue))
         : null,
-    xirr: xirr(flows),
+    xirr: historyDays >= MIN_DAYS_TO_ANNUALISE ? xirr(flows) : null,
+    historyDays,
   }
 }
 
