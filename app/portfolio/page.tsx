@@ -65,6 +65,28 @@ export default async function PortfolioPage({
   const cash = [...latestSnapshot.values()].reduce((sum, s) => sum + s.cashBalance, 0)
   const cashAsOf = [...latestSnapshot.values()].map((s) => s.asOf).sort()[0] ?? null
 
+  // What you put in against what it is worth now. Deposits and cash come from
+  // each account's latest statement; the shares are valued at today's prices,
+  // so this moves with the market between statements. "Equity" here is what
+  // you own — shares plus cash — not the broker's margin figure of the same
+  // name, which values shares at the lower of cost and market.
+  const inScope = selected ? accounts.filter((a) => a.id === selected.id) : accounts
+  const missing = inScope.filter((a) => !latestSnapshot.has(a.id)).map((a) => a.name)
+  const snaps = [...latestSnapshot.values()]
+  const deposited = snaps.reduce((t, s) => t + s.deposit + s.shareTransferIn, 0)
+  const withdrawn = snaps.reduce((t, s) => t + s.withdraw + s.shareTransferOut, 0)
+  const equity = portfolio.totalMarketValue + cash
+  const money = {
+    known: snaps.length > 0 && missing.length === 0,
+    missing,
+    deposited,
+    withdrawn,
+    netInvested: deposited - withdrawn,
+    equity,
+    gain: equity - (deposited - withdrawn),
+    totalReturn: deposited - withdrawn > 0 ? (equity - (deposited - withdrawn)) / (deposited - withdrawn) : null,
+  }
+
   // Sector weights, by market value.
   const sectorOf = new Map(transactions.map((t) => [t.symbol, t.sector ?? 'Unclassified']))
   const bySector = new Map<string, number>()
@@ -123,18 +145,34 @@ export default async function PortfolioPage({
             </div>
           ) : null}
 
-          <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-4">
-            <Stat
-              label="Total worth"
-              value={formatBDT(portfolio.totalMarketValue + cash)}
-              sub="holdings plus cash"
-            />
-            <Stat label="Market value" value={formatBDT(portfolio.totalMarketValue)} />
-            <Stat
-              label="Cash available"
-              value={cashAsOf ? formatBDT(cash) : '—'}
-              sub={cashAsOf ? `per statement of ${formatTradeDate(cashAsOf)}` : 'import a statement'}
-            />
+          <section className="space-y-1.5">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Your money</h2>
+            {money.known ? (
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-3 lg:grid-cols-6">
+                <Stat label="Deposited" value={formatBDT(money.deposited)} sub="everything you put in" />
+                <Stat label="Withdrawn" value={formatBDT(money.withdrawn)} sub="everything you took out" />
+                <Stat label="Net invested" value={formatBDT(money.netInvested)} sub="deposited less withdrawn" />
+                <Stat label="Portfolio value" value={formatBDT(portfolio.totalMarketValue)} sub="shares at today’s prices" />
+                <Stat label="Cash" value={formatBDT(cash)} sub={`per statement of ${formatTradeDate(cashAsOf!)}`} />
+                <Stat
+                  label="Total equity"
+                  value={formatBDT(money.equity)}
+                  sub={`${money.gain >= 0 ? '+' : ''}${formatBDT(money.gain)} · ${formatPercent(money.totalReturn, 2, true)} on net invested`}
+                  tone={money.gain >= 0 ? 'good' : 'bad'}
+                />
+              </div>
+            ) : (
+              <p className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-2.5 text-xs text-neutral-500">
+                {money.missing.length > 0
+                  ? `No statement imported yet for ${money.missing.join(', ')} — deposits and cash come from the broker's statement. `
+                  : 'Deposits and cash come from the broker’s statement. '}
+                <Link href="/portfolio/import" className="text-sky-400 hover:text-sky-300">Import one</Link> to see what you
+                have put in against what it is worth.
+              </p>
+            )}
+          </section>
+
+          <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-3 lg:grid-cols-6">
             <Stat label="Cost" value={formatBDT(portfolio.totalCost)} sub="of what you still hold" />
             <Stat
               label="Unrealised"
