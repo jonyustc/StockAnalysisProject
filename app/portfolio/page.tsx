@@ -1,7 +1,14 @@
 import Link from 'next/link'
 
-import { getLatestQuotes, listBoAccounts, listPortfolioTransactions } from '@/db/queries'
+import {
+  getLastJobRun,
+  getLatestQuotes,
+  listBoAccounts,
+  listPortfolioTransactions,
+} from '@/db/queries'
 import { buildPortfolio } from '@/lib/portfolio'
+import { PRICE_SOURCE_NAME } from '@/lib/prices'
+import { assessFreshness, formatTradeDate, type Freshness } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
@@ -14,18 +21,29 @@ export default async function PortfolioPage({
   const params = await searchParams
   const accountParam = Number(Array.isArray(params.account) ? params.account[0] : params.account)
 
-  const [transactions, quotes, accounts] = await Promise.all([
+  const [transactions, quotes, accounts, lastPriceJob] = await Promise.all([
     listPortfolioTransactions(),
     getLatestQuotes(),
     listBoAccounts(),
+    getLastJobRun('prices'),
   ])
 
   const selected = accounts.find((a) => a.id === accountParam) ?? null
   const prices = new Map([...quotes].map(([symbol, quote]) => [symbol, quote.close]))
+  const priceDates = new Map([...quotes].map(([symbol, quote]) => [symbol, quote.tradeDate]))
   const portfolio = buildPortfolio(transactions, prices, new Date(), selected?.id)
   const everything = selected ? buildPortfolio(transactions, prices) : portfolio
 
   const open = portfolio.holdings.filter((h) => h.quantity > 0)
+
+  // Freshness of the prices actually valuing these holdings — not of the
+  // whole board — measured in trading days rather than calendar days.
+  const heldDates = open
+    .map((h) => priceDates.get(h.symbol))
+    .filter((d): d is string => d !== undefined)
+    .sort()
+  const newestPrice = heldDates.at(-1) ?? null
+  const freshness = assessFreshness(newestPrice)
   const closed = portfolio.holdings.filter((h) => h.quantity === 0)
   const warnings = portfolio.holdings.flatMap((h) => h.warnings)
 
@@ -120,6 +138,10 @@ export default async function PortfolioPage({
             />
           </section>
 
+          {open.length > 0 ? (
+            <PriceFreshness freshness={freshness} lastJob={lastPriceJob} />
+          ) : null}
+
           {portfolio.largestWeight !== null && portfolio.largestWeight > 0.4 ? (
             <p className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-2.5 text-xs text-neutral-400">
               <strong className="font-medium text-neutral-300">
@@ -134,6 +156,8 @@ export default async function PortfolioPage({
             rows={open}
             total={portfolio.totalMarketValue}
             emptyText="No open positions in this account."
+            priceDates={priceDates}
+            newestPrice={newestPrice}
           />
 
           {/* Per-account totals, only when looking at everything and there is
@@ -218,12 +242,16 @@ function Table({
   total,
   emptyText,
   closed = false,
+  priceDates,
+  newestPrice = null,
 }: {
   title: string
   rows: ReturnType<typeof buildPortfolio>['holdings']
   total: number
   emptyText: string
   closed?: boolean
+  priceDates?: Map<string, string>
+  newestPrice?: string | null
 }) {
   if (rows.length === 0) {
     return emptyText ? <p className="text-sm text-neutral-500">{emptyText}</p> : null
@@ -292,6 +320,19 @@ function Table({
                       ) : (
                         formatBDT(holding.marketValue)
                       )}
+                      {/* A stock that did not trade, or was halted, keeps its
+                          last close — flag it so it is not read as today's. */}
+                      {(() => {
+                        const date = priceDates?.get(holding.symbol)
+                        return date && newestPrice && date < newestPrice ? (
+                          <span
+                            className="block text-xs text-amber-500/80"
+                            title="Older than the rest — it may not have traded since"
+                          >
+                            price from {formatTradeDate(date)}
+                          </span>
+                        ) : null
+                      })()}
                     </td>
                     <td
                       className={`px-3 py-2 text-right tabular-nums ${
@@ -334,6 +375,66 @@ function Table({
         </table>
       </div>
     </section>
+  )
+}
+
+function PriceFreshness({
+  freshness,
+  lastJob,
+}: {
+  freshness: Freshness
+  lastJob: { startedAt: Date; succeeded: boolean | null; message: string | null } | null
+}) {
+  if (freshness.status === 'none' || freshness.latest === null) {
+    return (
+      <p className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
+        No prices yet, so market value cannot be worked out. Prices arrive once a trading day,
+        around 5pm Dhaka.
+      </p>
+    )
+  }
+
+  const asOf = (
+    <>
+      Prices as of <strong className="font-medium text-neutral-300">{formatTradeDate(freshness.latest)}</strong>{' '}
+      · DSE close via {PRICE_SOURCE_NAME}
+    </>
+  )
+
+  if (freshness.status === 'fresh') {
+    return <p className="text-xs text-neutral-500">{asOf}</p>
+  }
+
+  if (freshness.status === 'behind') {
+    return (
+      <p className="text-xs text-neutral-500">
+        {asOf} · <span className="text-amber-500/80">the {formatTradeDate(freshness.expected)} close has not arrived yet</span>
+      </p>
+    )
+  }
+
+  // Stale: two or more sessions missed. Say why, if the job left a reason.
+  const failed = lastJob && lastJob.succeeded === false
+  return (
+    <div className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
+      <p>
+        <strong className="font-medium">
+          Prices are {freshness.missedTradingDays} trading days old
+        </strong>{' '}
+        — last close {formatTradeDate(freshness.latest)}, expected {formatTradeDate(freshness.expected)}.
+        Market value and gains below are out of date. If DSE has been shut for a holiday, this is
+        expected; otherwise the daily price job is not running.
+      </p>
+      {lastJob ? (
+        <p className="mt-1 text-amber-200/60">
+          Last price job: {lastJob.startedAt.toISOString().slice(0, 16).replace('T', ' ')} UTC ·{' '}
+          {failed ? 'failed' : 'succeeded'}
+          {lastJob.message ? ` — ${lastJob.message}` : ''}
+        </p>
+      ) : (
+        <p className="mt-1 text-amber-200/60">The price job has never run.</p>
+      )}
+    </div>
   )
 }
 

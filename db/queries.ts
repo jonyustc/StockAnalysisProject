@@ -11,6 +11,7 @@ import {
   corporateActions,
   financialFacts,
   fiscalPeriods,
+  jobRuns,
   lineItemDefs,
   portfolioTransactions,
   sectors,
@@ -384,4 +385,20 @@ export async function listBoAccounts() {
     .select()
     .from(boAccounts)
     .orderBy(desc(boAccounts.isActive), asc(boAccounts.name))
+}
+
+/** The most recent run of a scheduled job, to explain a stale price. */
+export async function getLastJobRun(jobName: string) {
+  const [run] = await db
+    .select({
+      startedAt: jobRuns.startedAt,
+      succeeded: jobRuns.succeeded,
+      message: jobRuns.message,
+    })
+    .from(jobRuns)
+    .where(eq(jobRuns.jobName, jobName))
+    .orderBy(desc(jobRuns.startedAt))
+    .limit(1)
+
+  return run ?? null
 }
