@@ -429,13 +429,13 @@ describe('multiple BO accounts', () => {
 
 describe('annualising', () => {
   const opening = (date: string) => [
-    txn({ tradeDate: date, quantity: 850, pricePerShare: 183424.5 / 850 }),
+    txn({ tradeDate: date, quantity: 100, pricePerShare: 200 }),
   ]
 
   it('refuses to annualise a day of history', () => {
     // The bug this guards against: a 0.5% move over one day reported as an
     // "annual return" of 524%.
-    const p = buildPortfolio(opening('2026-09-22'), new Map([['SQURPHARMA', 215.8 * 1.005]]), new Date('2026-09-23T12:00:00Z'))
+    const p = buildPortfolio(opening('2026-09-22'), new Map([['SQURPHARMA', 200 * 1.005]]), new Date('2026-09-23T12:00:00Z'))
     assert.equal(p.xirr, null)
     assert.equal(p.historyDays, 1)
   })

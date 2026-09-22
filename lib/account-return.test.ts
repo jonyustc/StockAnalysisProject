@@ -29,35 +29,35 @@ function snap(over: Partial<AccountSnapshot>): AccountSnapshot {
 const close = (a: number | null, b: number, eps = 1e-6) => a !== null && Math.abs(a - b) < eps
 
 describe('lifetimeReturn', () => {
-  // Figures shaped like a real statement: deposits, a realised gain from past
-  // sales, a dividend, holdings slightly up, and a fee that no line names.
+  // Synthetic figures shaped like a statement: deposits, a realised gain from
+  // past sales, a dividend, holdings slightly up, and a fee that no line names.
   const s = snap({
-    marketValue: 183430,
-    cashBalance: 53.19,
-    costOfHoldings: 183424.5,
-    deposit: 175850,
-    cashDividend: 297.5,
-    realisedGain: 7630.2,
+    marketValue: 100000,
+    cashBalance: 50,
+    costOfHoldings: 99000,
+    deposit: 95000,
+    cashDividend: 400,
+    realisedGain: 3950,
   })
   const r = lifetimeReturn(s)
 
   it('measures money in against worth now', () => {
-    assert.ok(close(r.moneyIn, 175850))
-    assert.ok(close(r.worth, 183483.19))
-    assert.ok(close(r.gain, 7633.19))
-    assert.ok(close(r.totalReturn, 7633.19 / 175850))
+    assert.ok(close(r.moneyIn, 95000))
+    assert.ok(close(r.worth, 100050))
+    assert.ok(close(r.gain, 5050))
+    assert.ok(close(r.totalReturn, 5050 / 95000))
   })
 
   it('reconciles into realised, dividends, unrealised and what is left over', () => {
-    assert.ok(close(r.unrealised, 5.5))
+    assert.ok(close(r.unrealised, 1000))
     // The ৳300 no line explains — an account charge the gains alone miss.
-    assert.ok(close(r.unexplained, -300.01, 1e-4))
+    assert.ok(close(r.unexplained, -300, 1e-4))
     assert.ok(close(r.realised + r.dividends + r.unrealised! + r.unexplained!, r.gain))
   })
 
   it('does not count dividends as money put in', () => {
     // If they were, a dividend would LOWER the return.
-    assert.equal(netContributions(s), 175850)
+    assert.equal(netContributions(s), 95000)
   })
 
   it('counts share transfers and withdrawals', () => {
