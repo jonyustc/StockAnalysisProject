@@ -1,19 +1,29 @@
 import Link from 'next/link'
 
-import { getLatestQuotes, listPortfolioTransactions } from '@/db/queries'
+import { getLatestQuotes, listBoAccounts, listPortfolioTransactions } from '@/db/queries'
 import { buildPortfolio } from '@/lib/portfolio'
 import { formatBDT, formatPercent } from '@/lib/units'
 
 export const dynamic = 'force-dynamic'
 
-export default async function PortfolioPage() {
-  const [transactions, quotes] = await Promise.all([
+export default async function PortfolioPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
+  const params = await searchParams
+  const accountParam = Number(Array.isArray(params.account) ? params.account[0] : params.account)
+
+  const [transactions, quotes, accounts] = await Promise.all([
     listPortfolioTransactions(),
     getLatestQuotes(),
+    listBoAccounts(),
   ])
 
+  const selected = accounts.find((a) => a.id === accountParam) ?? null
   const prices = new Map([...quotes].map(([symbol, quote]) => [symbol, quote.close]))
-  const portfolio = buildPortfolio(transactions, prices)
+  const portfolio = buildPortfolio(transactions, prices, new Date(), selected?.id)
+  const everything = selected ? buildPortfolio(transactions, prices) : portfolio
 
   const open = portfolio.holdings.filter((h) => h.quantity > 0)
   const closed = portfolio.holdings.filter((h) => h.quantity === 0)
@@ -25,8 +35,9 @@ export default async function PortfolioPage() {
         <div>
           <h1 className="text-xl font-semibold text-neutral-100">Portfolio</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Cost basis is weighted average, with commission included and bonus shares reducing
-            it. Derived from the ledger, never stored.
+            {selected ? `${selected.name}. ` : 'All BO accounts combined. '}
+            Cost basis is weighted average per account, with commission included and bonus shares
+            reducing it. Derived from the ledger, never stored.
           </p>
         </div>
         <Link
@@ -47,6 +58,24 @@ export default async function PortfolioPage() {
         </p>
       ) : (
         <>
+          {accounts.length > 1 ? (
+            <nav className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-neutral-600">Account:</span>
+              <FilterLink href="/portfolio" active={!selected}>
+                All
+              </FilterLink>
+              {accounts.map((account) => (
+                <FilterLink
+                  key={account.id}
+                  href={`/portfolio?account=${account.id}`}
+                  active={selected?.id === account.id}
+                >
+                  {account.name}
+                </FilterLink>
+              ))}
+            </nav>
+          ) : null}
+
           {warnings.length > 0 ? (
             <div className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
               {warnings.map((warning) => (
@@ -96,8 +125,69 @@ export default async function PortfolioPage() {
             title="Holdings"
             rows={open}
             total={portfolio.totalMarketValue}
-            emptyText="No open positions."
+            emptyText="No open positions in this account."
           />
+
+          {/* Per-account totals, only when looking at everything and there is
+              more than one account to compare. */}
+          {!selected && everything.byAccount.length > 1 ? (
+            <section>
+              <h2 className="mb-2 text-sm font-medium text-neutral-300">By account</h2>
+              <div className="overflow-x-auto rounded border border-neutral-800">
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-neutral-800 bg-neutral-900/50 text-xs uppercase tracking-wide text-neutral-500">
+                      <th className="px-3 py-2 text-left font-medium">Account</th>
+                      <th className="px-3 py-2 text-right font-medium">Positions</th>
+                      <th className="px-3 py-2 text-right font-medium">Cost</th>
+                      <th className="px-3 py-2 text-right font-medium">Value</th>
+                      <th className="px-3 py-2 text-right font-medium">Unrealised</th>
+                      <th className="px-3 py-2 text-right font-medium">Realised</th>
+                      <th className="px-3 py-2 text-right font-medium">Share of total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {everything.byAccount.map((account) => (
+                      <tr key={account.accountId} className="border-b border-neutral-900 last:border-0">
+                        <td className="px-3 py-2">
+                          <Link
+                            href={`/portfolio?account=${account.accountId}`}
+                            className="text-sky-400 hover:text-sky-300"
+                          >
+                            {account.accountName}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-neutral-400">
+                          {account.openPositions}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-neutral-300">
+                          {formatBDT(account.totalCost)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-neutral-200">
+                          {formatBDT(account.totalMarketValue)}
+                        </td>
+                        <td
+                          className={`px-3 py-2 text-right tabular-nums ${
+                            account.totalUnrealised >= 0 ? 'text-emerald-500' : 'text-red-400'
+                          }`}
+                        >
+                          {formatBDT(account.totalUnrealised)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-neutral-400">
+                          {account.totalRealised === 0 ? '—' : formatBDT(account.totalRealised)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-neutral-400">
+                          {everything.totalMarketValue > 0
+                            ? formatPercent(account.totalMarketValue / everything.totalMarketValue, 1)
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
 
           {closed.length > 0 ? (
             <Table
@@ -164,6 +254,16 @@ function Table({
                   >
                     {holding.symbol}
                   </Link>
+                  {/* Combined across accounts — the average cost shown is the
+                      sum of each account's cost over the sum of shares. */}
+                  {holding.accountCount > 1 ? (
+                    <span
+                      className="ml-2 text-xs text-neutral-600"
+                      title="Held in more than one BO account; each is costed separately"
+                    >
+                      {holding.accountCount} accounts
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums text-neutral-200">
                   {holding.quantity.toLocaleString()}
@@ -226,6 +326,29 @@ function Table({
         </table>
       </div>
     </section>
+  )
+}
+
+function FilterLink({
+  href,
+  active,
+  children,
+}: {
+  href: string
+  active: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded-full border px-2.5 py-0.5 ${
+        active
+          ? 'border-sky-700 text-sky-300'
+          : 'border-neutral-700 text-neutral-400 hover:border-neutral-600 hover:text-neutral-200'
+      }`}
+    >
+      {children}
+    </Link>
   )
 }
 

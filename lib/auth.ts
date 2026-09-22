@@ -6,8 +6,8 @@
  * auth provider tied to one of them would break that. It is also less
  * machinery than a provider for an app with exactly one user.
  *
- * Uses Web Crypto rather than node:crypto so the same code runs in Next.js
- * middleware (Edge runtime) and in route handlers (Node).
+ * Uses Web Crypto rather than node:crypto so it runs unchanged in the proxy
+ * (proxy.ts) and in route handlers, whichever runtime either is on.
  */
 
 const COOKIE_NAME = 'dse_session'
@@ -49,8 +49,8 @@ async function sign(payload: string): Promise<string> {
 
 /**
  * Compares without leaking, through timing, how much of the value matched.
- * Written by hand because node:crypto's timingSafeEqual is not available on
- * the Edge runtime.
+ * Written by hand so the module has no node:crypto dependency and stays
+ * runtime-agnostic.
  */
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false

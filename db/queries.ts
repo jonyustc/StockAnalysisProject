@@ -6,6 +6,7 @@ import type { CorporateActionInput } from '@/lib/corporate-actions'
 
 import { db } from './client'
 import {
+  boAccounts,
   companies,
   corporateActions,
   financialFacts,
@@ -346,6 +347,8 @@ export async function listPortfolioTransactions() {
   const rows = await db
     .select({
       id: portfolioTransactions.id,
+      accountId: portfolioTransactions.boAccountId,
+      accountName: boAccounts.name,
       symbol: companies.dseSymbol,
       companyName: companies.name,
       sector: sectors.name,
@@ -360,6 +363,7 @@ export async function listPortfolioTransactions() {
     })
     .from(portfolioTransactions)
     .innerJoin(companies, eq(companies.id, portfolioTransactions.companyId))
+    .innerJoin(boAccounts, eq(boAccounts.id, portfolioTransactions.boAccountId))
     .leftJoin(sectors, eq(sectors.id, companies.sectorId))
     .orderBy(desc(portfolioTransactions.tradeDate), desc(portfolioTransactions.id))
 
@@ -372,4 +376,12 @@ export async function listPortfolioTransactions() {
     commission: Number(row.commission),
     taxWithheld: Number(row.taxWithheld),
   }))
+}
+
+/** Active accounts first, then by name. */
+export async function listBoAccounts() {
+  return db
+    .select()
+    .from(boAccounts)
+    .orderBy(desc(boAccounts.isActive), asc(boAccounts.name))
 }

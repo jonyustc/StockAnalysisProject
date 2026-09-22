@@ -644,6 +644,28 @@ export type SourceDocument = typeof sourceDocuments.$inferSelect
 export type ResearchNote = typeof researchNotes.$inferSelect
 
 /* -------------------------------------------------------------------------- */
+/* bo_accounts                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A CDBL Beneficiary Owner account. A boundary, not a label: shares bought in
+ * one account cannot be sold from another, so cost basis is per account.
+ */
+export const boAccounts = pgTable('bo_accounts', {
+  id: smallint('id').generatedAlwaysAsIdentity().primaryKey(),
+  name: text('name').notNull().unique(),
+  /** 16-digit CDBL BO ID. Optional; goes into the nightly backup if set. */
+  boNumber: text('bo_number'),
+  broker: text('broker'),
+  isActive: boolean('is_active').notNull().default(true),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type BoAccount = typeof boAccounts.$inferSelect
+
+/* -------------------------------------------------------------------------- */
 /* portfolio_transactions                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -667,6 +689,9 @@ export const portfolioTransactions = pgTable(
     companyId: bigint('company_id', { mode: 'number' })
       .notNull()
       .references(() => companies.id, { onDelete: 'restrict' }),
+    boAccountId: smallint('bo_account_id')
+      .notNull()
+      .references(() => boAccounts.id, { onDelete: 'restrict' }),
 
     tradeDate: date('trade_date').notNull(),
     txnType: transactionType('txn_type').notNull(),

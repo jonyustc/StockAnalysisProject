@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { buildHolding, buildPortfolio, cashFlowOf, xirr, type PortfolioTransaction } from './portfolio'
+import {
+  buildHolding,
+  buildPortfolio,
+  cashFlowOf,
+  mergeBySymbol,
+  xirr,
+  type PortfolioTransaction,
+} from './portfolio'
 
 function txn(over: Partial<PortfolioTransaction>): PortfolioTransaction {
   return {
+    accountId: 1,
+    accountName: 'Personal',
     symbol: 'SQURPHARMA',
     tradeDate: '2025-01-01',
     txnType: 'buy',
@@ -306,5 +315,114 @@ describe('buildPortfolio', () => {
     assert.equal(empty.totalCost, 0)
     assert.equal(empty.xirr, null)
     assert.equal(empty.largestWeight, null)
+  })
+})
+
+describe('multiple BO accounts', () => {
+  const PERSONAL = { accountId: 1, accountName: 'Personal' }
+  const JOINT = { accountId: 2, accountName: 'Joint' }
+
+  it('never matches a sale against another account’s cheaper shares', () => {
+    // Bought cheap in Personal, dear in Joint, then sold from Joint. Pooling
+    // the two would cost the sale at the blended ৳150 and report a ৳5,000 gain
+    // that did not happen. Per account, Joint sold at exactly its cost.
+    const portfolio = buildPortfolio(
+      [
+        txn({ ...PERSONAL, tradeDate: '2025-01-01', quantity: 100, pricePerShare: 100 }),
+        txn({ ...JOINT, tradeDate: '2025-02-01', quantity: 100, pricePerShare: 200 }),
+        txn({ ...JOINT, tradeDate: '2025-06-01', txnType: 'sell', quantity: 100, pricePerShare: 200 }),
+      ],
+      new Map([['SQURPHARMA', 200]]),
+      AS_OF,
+    )
+
+    assert.equal(portfolio.totalRealised, 0)
+
+    const joint = portfolio.positions.find((p) => p.accountId === 2)!
+    assert.equal(joint.quantity, 0)
+    assert.equal(joint.realisedGain, 0)
+
+    const personal = portfolio.positions.find((p) => p.accountId === 1)!
+    assert.equal(personal.quantity, 100)
+    assert.equal(personal.averageCost, 100)
+  })
+
+  it('warns per account, naming the account', () => {
+    // 100 held in Personal does not cover a 50-share sale from Joint.
+    const portfolio = buildPortfolio(
+      [
+        txn({ ...PERSONAL, quantity: 100, pricePerShare: 100 }),
+        txn({ ...JOINT, tradeDate: '2025-06-01', txnType: 'sell', quantity: 50, pricePerShare: 120 }),
+      ],
+      new Map(),
+      AS_OF,
+    )
+    const warnings = portfolio.holdings.flatMap((h) => h.warnings)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /^Joint · SQURPHARMA/)
+  })
+
+  it('combines the same stock across accounts by summing positions', () => {
+    const portfolio = buildPortfolio(
+      [
+        txn({ ...PERSONAL, quantity: 100, pricePerShare: 100 }),
+        txn({ ...JOINT, tradeDate: '2025-02-01', quantity: 300, pricePerShare: 200 }),
+      ],
+      new Map([['SQURPHARMA', 210]]),
+      AS_OF,
+    )
+
+    assert.equal(portfolio.holdings.length, 1)
+    const combined = portfolio.holdings[0]
+    assert.equal(combined.quantity, 400)
+    assert.equal(combined.costBasis, 70000)
+    assert.equal(combined.averageCost, 175)
+    assert.equal(combined.accountCount, 2)
+    assert.equal(combined.accountId, null)
+    assert.equal(combined.marketValue, 84000)
+  })
+
+  it('scopes to one account when asked', () => {
+    const all = [
+      txn({ ...PERSONAL, quantity: 100, pricePerShare: 100 }),
+      txn({ ...JOINT, symbol: 'LHB', quantity: 1000, pricePerShare: 50 }),
+    ]
+    const prices = new Map([
+      ['SQURPHARMA', 110],
+      ['LHB', 55],
+    ])
+
+    const joint = buildPortfolio(all, prices, AS_OF, 2)
+    assert.deepEqual(joint.holdings.map((h) => h.symbol), ['LHB'])
+    assert.equal(joint.totalCost, 50000)
+    assert.equal(joint.byAccount.length, 1)
+  })
+
+  it('reports totals for each account', () => {
+    const portfolio = buildPortfolio(
+      [
+        txn({ ...PERSONAL, quantity: 100, pricePerShare: 100 }),
+        txn({ ...JOINT, symbol: 'LHB', quantity: 1000, pricePerShare: 50 }),
+      ],
+      new Map([
+        ['SQURPHARMA', 110],
+        ['LHB', 55],
+      ]),
+      AS_OF,
+    )
+
+    const byName = Object.fromEntries(portfolio.byAccount.map((a) => [a.accountName, a]))
+    assert.equal(byName.Personal.totalCost, 10000)
+    assert.equal(byName.Personal.totalUnrealised, 1000)
+    assert.equal(byName.Joint.totalCost, 50000)
+    assert.equal(byName.Joint.totalUnrealised, 5000)
+  })
+
+  it('leaves a single-account stock exactly as it was', () => {
+    const one = buildHolding('X', [txn({ quantity: 100, pricePerShare: 100 })], 110, AS_OF, {
+      id: 1,
+      name: 'Personal',
+    })
+    assert.deepEqual(mergeBySymbol([one])[0], one)
   })
 })

@@ -3,20 +3,23 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { COOKIE_NAME, verifySessionToken } from '@/lib/auth'
 
 /**
+ * Auth gate. Next.js 16 renamed the middleware file convention to proxy.ts
+ * (middleware.ts is deprecated) and runs it on Node.js by default.
+ *
  * Everything is private. This app is a database editor: an unauthenticated
  * visitor could otherwise overwrite hand-entered financial history.
  *
  * Scheduled jobs under /api/cron are excluded here and authenticate
  * themselves with a bearer secret instead, since they arrive without a cookie.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const token = request.cookies.get(COOKIE_NAME)?.value
 
   let authenticated = false
   try {
     authenticated = await verifySessionToken(token)
   } catch (error) {
-    // Middleware runs on every route, so throwing here would take the whole
+    // The proxy runs on every route, so throwing here would take the whole
     // site down with a 500 rather than showing a login page. Fail closed.
     console.error('[auth] session verification failed:', error)
   }

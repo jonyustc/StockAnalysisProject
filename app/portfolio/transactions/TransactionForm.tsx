@@ -12,12 +12,29 @@ const TYPES = [
   { value: 'dividend', label: 'Dividend', hint: 'Cash in, no share movement' },
 ] as const
 
-export function TransactionForm({ symbols }: { symbols: string[] }) {
+export function TransactionForm({
+  symbols,
+  accounts,
+  defaultAccountId,
+}: {
+  symbols: string[]
+  accounts: { id: number; name: string }[]
+  defaultAccountId?: number
+}) {
   const [result, formAction, isPending] = useActionState<TransactionResult | null, FormData>(
     addTransaction,
     null,
   )
   const [txnType, setTxnType] = useState<(typeof TYPES)[number]['value']>('buy')
+
+  if (accounts.length === 0) {
+    return (
+      <p className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm text-neutral-400">
+        Add a BO account above first. Every transaction belongs to one, because shares bought in
+        one account cannot be sold from another.
+      </p>
+    )
+  }
 
   const isDividend = txnType === 'dividend'
   const isBonus = txnType === 'bonus'
@@ -28,7 +45,17 @@ export function TransactionForm({ symbols }: { symbols: string[] }) {
       action={formAction}
       className="space-y-3 rounded border border-neutral-800 bg-neutral-900/40 p-4"
     >
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Field label="BO account">
+          <Select name="boAccountId" defaultValue={String(defaultAccountId ?? accounts[0].id)}>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
         <Field label="Company">
           <Select name="symbol" defaultValue={symbols[0] ?? ''}>
             {symbols.map((symbol) => (

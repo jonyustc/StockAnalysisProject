@@ -12,6 +12,9 @@ export type TransactionType = 'buy' | 'sell' | 'bonus' | 'rights' | 'dividend'
 
 export interface PortfolioTransaction {
   id?: number
+  /** The BO account the event happened in. Cost basis never crosses accounts. */
+  accountId: number
+  accountName?: string
   symbol: string
   tradeDate: string
   txnType: TransactionType
@@ -24,6 +27,11 @@ export interface PortfolioTransaction {
 
 export interface Holding {
   symbol: string
+  /** The account this position sits in; null once merged across accounts. */
+  accountId: number | null
+  accountName: string | null
+  /** How many BO accounts hold this stock (1 for a single position). */
+  accountCount: number
   quantity: number
   /** Cost of the shares still held, commission included. */
   costBasis: number
@@ -37,6 +45,8 @@ export interface Holding {
   unrealisedGain: number | null
   unrealisedPct: number | null
 
+  /** Gross dividends received in the trailing twelve months. */
+  dividendsTtm: number
   /** Dividends of the trailing twelve months against current cost. */
   yieldOnCost: number | null
 
@@ -74,11 +84,17 @@ export function cashFlowOf(txn: PortfolioTransaction): number {
   }
 }
 
+/**
+ * One position: one stock in one BO account. Callers must pass only that
+ * account's transactions — a sale is matched against the shares held in the
+ * same account, never against another account's cheaper lot.
+ */
 export function buildHolding(
   symbol: string,
   transactions: PortfolioTransaction[],
   price: number | null,
   asOf: Date = new Date(),
+  account: { id: number; name: string | null } | null = null,
 ): Holding {
   const ordered = [...transactions].sort(chronological)
 
@@ -149,6 +165,9 @@ export function buildHolding(
 
   return {
     symbol,
+    accountId: account?.id ?? null,
+    accountName: account?.name ?? null,
+    accountCount: 1,
     quantity,
     costBasis,
     averageCost: quantity > 0 ? costBasis / quantity : null,
@@ -159,6 +178,7 @@ export function buildHolding(
     unrealisedGain,
     unrealisedPct:
       unrealisedGain === null || costBasis <= 0 ? null : unrealisedGain / costBasis,
+    dividendsTtm: recentDividends,
     yieldOnCost: costBasis > 0 && recentDividends > 0 ? recentDividends / costBasis : null,
     firstTrade: tradeDates[0] ?? null,
     lastTrade: tradeDates[tradeDates.length - 1] ?? null,
@@ -166,8 +186,81 @@ export function buildHolding(
   }
 }
 
+/**
+ * Combine the same stock held across several BO accounts into one row.
+ *
+ * This SUMS positions — quantity, cost, gains, dividends — rather than pooling
+ * transactions into one weighted average. The result is identical for
+ * quantity and total cost, but realised gains differ: a pooled average would
+ * let a sale in one account be costed against cheaper shares in another and
+ * report a gain that never happened.
+ */
+export function mergeBySymbol(positions: Holding[]): Holding[] {
+  const bySymbol = new Map<string, Holding[]>()
+  for (const position of positions) {
+    if (!bySymbol.has(position.symbol)) bySymbol.set(position.symbol, [])
+    bySymbol.get(position.symbol)!.push(position)
+  }
+
+  return [...bySymbol.entries()].map(([symbol, group]) => {
+    if (group.length === 1) return group[0]
+
+    const sum = (pick: (h: Holding) => number) => group.reduce((total, h) => total + pick(h), 0)
+
+    const quantity = sum((h) => h.quantity)
+    const costBasis = sum((h) => h.costBasis)
+    const dividendsTtm = sum((h) => h.dividendsTtm)
+
+    // Market value is unknown if the price is — and the price is per symbol,
+    // so either every position has one or none does.
+    const priced = group.every((h) => h.marketValue !== null)
+    const marketValue = priced ? sum((h) => h.marketValue ?? 0) : null
+    const unrealisedGain = marketValue === null ? null : marketValue - costBasis
+
+    const dates = (pick: (h: Holding) => string | null) =>
+      group.map(pick).filter((d): d is string => d !== null).sort()
+
+    return {
+      symbol,
+      accountId: null,
+      accountName: null,
+      accountCount: group.filter((h) => h.quantity > 0 || h.realisedGain !== 0).length,
+      quantity,
+      costBasis,
+      averageCost: quantity > 0 ? costBasis / quantity : null,
+      realisedGain: sum((h) => h.realisedGain),
+      dividendsGross: sum((h) => h.dividendsGross),
+      dividendsNet: sum((h) => h.dividendsNet),
+      marketValue,
+      unrealisedGain,
+      unrealisedPct:
+        unrealisedGain === null || costBasis <= 0 ? null : unrealisedGain / costBasis,
+      dividendsTtm,
+      yieldOnCost: costBasis > 0 && dividendsTtm > 0 ? dividendsTtm / costBasis : null,
+      firstTrade: dates((h) => h.firstTrade)[0] ?? null,
+      lastTrade: dates((h) => h.lastTrade).at(-1) ?? null,
+      warnings: group.flatMap((h) => h.warnings),
+    }
+  })
+}
+
+export interface AccountSummary {
+  accountId: number
+  accountName: string
+  totalCost: number
+  totalMarketValue: number
+  totalUnrealised: number
+  totalRealised: number
+  totalDividendsGross: number
+  openPositions: number
+}
+
 export interface PortfolioSummary {
+  /** One row per stock, combined across whichever accounts are in scope. */
   holdings: Holding[]
+  /** One row per stock per account — the positions the totals are built from. */
+  positions: Holding[]
+  byAccount: AccountSummary[]
   totalCost: number
   totalMarketValue: number
   totalUnrealised: number
@@ -181,27 +274,69 @@ export interface PortfolioSummary {
   xirr: number | null
 }
 
+/**
+ * @param accountId  restrict to one BO account; omit for every account.
+ */
 export function buildPortfolio(
   transactions: PortfolioTransaction[],
   prices: Map<string, number>,
   asOf: Date = new Date(),
+  accountId?: number,
 ): PortfolioSummary {
-  const bySymbol = new Map<string, PortfolioTransaction[]>()
-  for (const txn of transactions) {
-    if (!bySymbol.has(txn.symbol)) bySymbol.set(txn.symbol, [])
-    bySymbol.get(txn.symbol)!.push(txn)
+  const scoped =
+    accountId === undefined ? transactions : transactions.filter((t) => t.accountId === accountId)
+
+  // Group by account AND symbol. This is the line that keeps cost basis from
+  // leaking between accounts.
+  const groups = new Map<string, PortfolioTransaction[]>()
+  for (const txn of scoped) {
+    const key = `${txn.accountId}|${txn.symbol}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(txn)
   }
 
-  const holdings = [...bySymbol.entries()]
-    .map(([symbol, txns]) => buildHolding(symbol, txns, prices.get(symbol) ?? null, asOf))
-    .sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0))
+  const positions = [...groups.values()].map((txns) => {
+    const { symbol, accountId: id, accountName } = txns[0]
+    const holding = buildHolding(symbol, txns, prices.get(symbol) ?? null, asOf, {
+      id,
+      name: accountName ?? null,
+    })
 
-  const totalCost = holdings.reduce((sum, h) => sum + h.costBasis, 0)
-  const totalMarketValue = holdings.reduce((sum, h) => sum + (h.marketValue ?? 0), 0)
+    // Say which account a warning belongs to, or it cannot be acted on.
+    if (accountName && holding.warnings.length > 0) {
+      holding.warnings = holding.warnings.map((w) => `${accountName} · ${symbol}: ${w}`)
+    }
+    return holding
+  })
+
+  const byValue = (a: Holding, b: Holding) => (b.marketValue ?? 0) - (a.marketValue ?? 0)
+  const holdings = mergeBySymbol(positions).sort(byValue)
+
+  const totalCost = positions.reduce((sum, h) => sum + h.costBasis, 0)
+  const totalMarketValue = positions.reduce((sum, h) => sum + (h.marketValue ?? 0), 0)
   const totalUnrealised = totalMarketValue - totalCost
 
+  const accountIds = [...new Set(positions.map((p) => p.accountId!))]
+  const byAccount: AccountSummary[] = accountIds
+    .map((id) => {
+      const own = positions.filter((p) => p.accountId === id)
+      const cost = own.reduce((s, h) => s + h.costBasis, 0)
+      const value = own.reduce((s, h) => s + (h.marketValue ?? 0), 0)
+      return {
+        accountId: id,
+        accountName: own[0]?.accountName ?? `Account ${id}`,
+        totalCost: cost,
+        totalMarketValue: value,
+        totalUnrealised: value - cost,
+        totalRealised: own.reduce((s, h) => s + h.realisedGain, 0),
+        totalDividendsGross: own.reduce((s, h) => s + h.dividendsGross, 0),
+        openPositions: own.filter((h) => h.quantity > 0).length,
+      }
+    })
+    .sort((a, b) => b.totalMarketValue - a.totalMarketValue)
+
   // The final flow is what the position is worth today, as if sold.
-  const flows = transactions
+  const flows = scoped
     .map((txn) => ({ date: txn.tradeDate, amount: cashFlowOf(txn) }))
     .filter((f) => f.amount !== 0)
 
@@ -211,6 +346,8 @@ export function buildPortfolio(
 
   return {
     holdings,
+    positions,
+    byAccount,
     totalCost,
     totalMarketValue,
     totalUnrealised,
