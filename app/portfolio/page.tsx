@@ -722,11 +722,15 @@ function NetCost({
 
   const avg = holding.averageCost
   const below = avg !== null && avg > 0 ? 1 - net / avg : null
-  const plan = freeSharePlan(holding, price)
+  // A position in one account links to that account's history, and only
+  // there is "sell N" something that can actually be done: shares held in
+  // two accounts cannot be sold as one lot.
+  const oneAccount = holding.accountId !== null
+  const plan = oneAccount ? freeSharePlan(holding, price) : null
 
   return (
     <Link
-      href={`/portfolio/stock/${holding.symbol}`}
+      href={`/portfolio/stock/${holding.symbol}${oneAccount ? `?account=${holding.accountId}` : ''}`}
       className="group block"
       title="How this moved, trade by trade"
     >

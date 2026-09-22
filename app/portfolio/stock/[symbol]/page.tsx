@@ -2,12 +2,12 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
-import { getLatestQuotes, listPortfolioTransactions } from '@/db/queries'
+import { getLatestQuotes, listBoAccounts, listPortfolioTransactions } from '@/db/queries'
 import { buildPortfolio, costTimeline, freeSharePlan } from '@/lib/portfolio'
 import { formatTradeDate } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
 
-import { ROW, Stat, TD, TH, THEAD_ROW } from '../../ui'
+import { AccountFilter, ROW, Stat, TD, TH, THEAD_ROW } from '../../ui'
 import { TradePlanner } from './TradePlanner'
 
 export const dynamic = 'force-dynamic'
@@ -22,18 +22,33 @@ const TYPE_STYLE: Record<string, string> = {
 
 const perShare = (v: number | null) => (v === null ? '—' : `৳${v.toFixed(2)}`)
 
-export default async function StockCostPage({ params }: { params: Promise<{ symbol: string }> }) {
+export default async function StockCostPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ symbol: string }>
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
+}) {
   const { symbol: raw } = await params
   const symbol = raw.toUpperCase()
+  const query = await searchParams
+  const accountParam = Number(Array.isArray(query.account) ? query.account[0] : query.account)
 
-  const [all, quotes] = await Promise.all([listPortfolioTransactions(), getLatestQuotes()])
-  const transactions = all.filter((t) => t.symbol === symbol)
-  if (transactions.length === 0) notFound()
+  const [all, quotes, accounts] = await Promise.all([listPortfolioTransactions(), getLatestQuotes(), listBoAccounts()])
+  const ofStock = all.filter((t) => t.symbol === symbol)
+  if (ofStock.length === 0) notFound()
+
+  // Only the accounts that have traded this stock are worth offering.
+  const traded = accounts.filter((a) => ofStock.some((t) => t.accountId === a.id))
+  const selected = traded.find((a) => a.id === accountParam) ?? null
+  const transactions = selected ? ofStock.filter((t) => t.accountId === selected.id) : ofStock
 
   const price = quotes.get(symbol)?.close ?? null
   const holding = buildPortfolio(transactions, new Map(price === null ? [] : [[symbol, price]])).holdings[0]
   const steps = costTimeline(transactions)
-  const plan = freeSharePlan(holding, price)
+  // A sale comes out of one account, so only plan one against one account.
+  const oneAccount = selected !== null || traded.length === 1
+  const plan = oneAccount ? freeSharePlan(holding, price) : null
   const net = holding.netCostPerShare
 
   return (
@@ -46,6 +61,7 @@ export default async function StockCostPage({ params }: { params: Promise<{ symb
           {symbol} <span className="text-sm font-normal text-neutral-500">cost history</span>
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-neutral-500">
+          {selected ? `${selected.name}. ` : traded.length > 1 ? 'All accounts combined. ' : ''}
           <strong className="font-medium text-neutral-300">Average cost</strong> is what the shares
           you hold cost — a profitable sale does not move it.{' '}
           <strong className="font-medium text-neutral-300">Net cost</strong> is everything you have
@@ -53,6 +69,18 @@ export default async function StockCostPage({ params }: { params: Promise<{ symb
           still held. It falls with every profitable round trip; at zero, what you hold is free.
         </p>
       </header>
+
+      <AccountFilter
+        basePath={`/portfolio/stock/${symbol}`}
+        accounts={traded}
+        selectedId={selected?.id ?? null}
+      />
+      {selected === null && traded.length > 1 && holding.quantity > 0 ? (
+        <p className="text-xs text-neutral-500">
+          Shares can only be sold from the account that holds them — pick one to plan a trade
+          against that account&apos;s own cost.
+        </p>
+      ) : null}
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 lg:grid-cols-5">
         <Stat label="Held" value={holding.quantity.toLocaleString()} sub={holding.accountCount > 1 ? `${holding.accountCount} accounts` : undefined} />
@@ -91,7 +119,7 @@ export default async function StockCostPage({ params }: { params: Promise<{ symb
           caption="After each event. The gap between the lines is what sales and dividends have already paid back."
           kind="line"
           format="per_share"
-          categories={steps.map((s) => `${formatTradeDate(s.date)} ${s.txnType}`)}
+          categories={steps.map((s) => formatTradeDate(s.date))}
           series={[
             { key: 'avg', label: 'Average cost', values: steps.map((s) => s.averageCost) },
             { key: 'net', label: 'Net cost', values: steps.map((s) => s.netCostPerShare) },
@@ -99,7 +127,7 @@ export default async function StockCostPage({ params }: { params: Promise<{ symb
         />
       ) : null}
 
-      {holding.quantity > 0 ? (
+      {holding.quantity > 0 && oneAccount ? (
         <TradePlanner
           quantity={holding.quantity}
           costBasis={holding.costBasis}

@@ -43,6 +43,10 @@ export function SeriesChart({ title, categories, series, format, kind, caption }
   const centres = bandCentres(categories.length)
   const band = innerWidth / Math.max(categories.length, 1)
 
+  // About 6 units per character at 10px, plus a gap between labels.
+  const longest = Math.max(1, ...categories.map((c) => c.length))
+  const labelStep = Math.max(1, Math.ceil((longest * 6 + 12) / band))
+
   // Bars share the band, with a 2px surface gap between neighbours.
   const barWidth = Math.max(4, (band * 0.62) / series.length - 2)
   const groupWidth = barWidth * series.length + 2 * (series.length - 1)
@@ -191,19 +195,22 @@ export function SeriesChart({ title, categories, series, format, kind, caption }
             y2={PLOT.padTop + innerHeight}
             stroke={CHART_COLORS.baseline}
           />
-          {categories.map((label, index) => (
-            <text
-              key={label}
-              x={centres[index]}
-              y={PLOT.height - 8}
-              textAnchor="middle"
-              fontSize={10}
-              fill={hover === index ? CHART_COLORS.inkSecondary : CHART_COLORS.muted}
-              style={{ fontVariantNumeric: 'tabular-nums' }}
-            >
-              {label}
-            </text>
-          ))}
+          {categories.map((label, index) =>
+            // Only as many labels as fit side by side; the hovered one always shows.
+            index % labelStep === 0 || hover === index ? (
+              <text
+                key={index}
+                x={centres[index]}
+                y={PLOT.height - 8}
+                textAnchor="middle"
+                fontSize={10}
+                fill={hover === index ? CHART_COLORS.inkSecondary : CHART_COLORS.muted}
+                style={{ fontVariantNumeric: 'tabular-nums' }}
+              >
+                {label}
+              </text>
+            ) : null,
+          )}
         </svg>
 
         {hover !== null ? (
