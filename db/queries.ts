@@ -509,6 +509,8 @@ export async function listPriceTargets() {
       buyBelow: priceTargets.buyBelow,
       sellAbove: priceTargets.sellAbove,
       note: priceTargets.note,
+      buyAlertedOn: priceTargets.buyAlertedOn,
+      sellAlertedOn: priceTargets.sellAlertedOn,
       updatedAt: priceTargets.updatedAt,
     })
     .from(priceTargets)

@@ -7,6 +7,7 @@ import {
   commissionRate,
   DEFAULT_COMMISSION_RATE,
   evaluateTarget,
+  planAlerts,
   priceForGain,
   sortByUrgency,
   type Target,
@@ -86,6 +87,29 @@ describe('evaluateTarget', () => {
     const s = evaluateTarget(target({ buyBelow: 95 }), null, held, 0.004)
     assert.equal(s.buy?.reached, false)
     assert.match(s.warnings.join(' '), /No price/)
+  })
+
+  it('alerts once per crossing and re-arms when the price moves back', () => {
+    const quote = { close: 94, tradeDate: '2026-02-01' }
+    const fresh = evaluateTarget(target({ buyBelow: 95 }), quote, held, 0.004)
+    const first = planAlerts([fresh])
+    assert.equal(first.send.length, 1)
+    assert.match(first.send[0].body, /৳94\.00/)
+
+    // Still reached the next day, already alerted: nothing new.
+    const again = evaluateTarget(target({ buyBelow: 95, buyAlertedOn: '2026-02-01' }), quote, held, 0.004)
+    assert.deepEqual(planAlerts([again]), { send: [], rearm: [] })
+
+    // Back above: re-armed, so the next crossing alerts again.
+    const back = evaluateTarget(target({ buyBelow: 95, buyAlertedOn: '2026-02-01' }), { close: 99, tradeDate: '2026-02-03' }, held, 0.004)
+    assert.deepEqual(planAlerts([back]).rearm, [{ targetId: 1, side: 'buy' }])
+  })
+
+  it('does not send a sell alert with nothing to sell, and says when a sale would lose', () => {
+    const nothing = evaluateTarget(target({ sellAbove: 90 }), { close: 99, tradeDate: 'd' }, null, 0.004)
+    assert.deepEqual(planAlerts([nothing]).send, [])
+    const loss = evaluateTarget(target({ sellAbove: 99 }), { close: 99.5, tradeDate: 'd' }, held, 0.004)
+    assert.match(planAlerts([loss]).send[0].body, /loses money/)
   })
 
   it('puts reached targets first', () => {

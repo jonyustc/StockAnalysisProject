@@ -44,9 +44,14 @@ export const config = {
      *   api/cron     scheduled jobs, which use a bearer secret
      *   _next        framework assets
      *   favicon.ico  requested before any redirect can help
+     *   sw.js, manifest.webmanifest, icon-*.png, badge-*.png
+     *                the service worker and install files: public, holding
+     *                nothing private, and fetched by the browser itself —
+     *                a manifest without cookies — so a login redirect would
+     *                break alerts and installing
      */
     // Anchored so only these exact paths (and their subpaths) are excluded.
     // An unanchored "login" would also have let through /loginsomething.
-    '/((?!login$|login/|api/cron$|api/cron/|_next/static/|_next/image|favicon.ico$).*)',
+    '/((?!login$|login/|api/cron$|api/cron/|_next/static/|_next/image|favicon.ico$|sw\\.js$|manifest\\.webmanifest$|icon-\\d+\\.png$|badge-\\d+\\.png$).*)',
   ],
 }

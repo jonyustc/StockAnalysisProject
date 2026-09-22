@@ -868,6 +868,21 @@ export const priceTargets = pgTable('price_targets', {
   buyBelow: numeric('buy_below', { precision: 18, scale: 4 }),
   sellAbove: numeric('sell_above', { precision: 18, scale: 4 }),
   note: text('note'),
+  /** The date an alert went out for each side; cleared when the price moves back. */
+  buyAlertedOn: date('buy_alerted_on'),
+  sellAlertedOn: date('sell_alerted_on'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** A browser on a device that has agreed to receive system alerts. */
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  label: text('label'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+  failures: integer('failures').notNull().default(0),
 })

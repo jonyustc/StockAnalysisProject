@@ -45,6 +45,9 @@ export interface Target {
   buyBelow: number | null
   sellAbove: number | null
   note: string | null
+  /** The date an alert went out for each side, if one has. */
+  buyAlertedOn?: string | null
+  sellAlertedOn?: string | null
 }
 
 export interface Position {
@@ -117,6 +120,79 @@ export function evaluateTarget(
     breakEven,
     warnings,
   }
+}
+
+export interface PlannedAlert {
+  targetId: number
+  side: 'buy' | 'sell'
+  /** The close the alert is about. */
+  date: string
+  title: string
+  body: string
+  url: string
+}
+
+/**
+ * Which alerts to send, and which to re-arm.
+ *
+ * One alert per crossing: a target that stays reached for a week alerts on
+ * the first day, not every day. When the price moves back across, the side
+ * is re-armed so the next crossing alerts again. A sell alert with nothing
+ * to sell is not sent — there is nothing to act on.
+ */
+export function planAlerts(statuses: TargetStatus[]): {
+  send: PlannedAlert[]
+  rearm: { targetId: number; side: 'buy' | 'sell' }[]
+} {
+  const send: PlannedAlert[] = []
+  const rearm: { targetId: number; side: 'buy' | 'sell' }[] = []
+
+  for (const s of statuses) {
+    if (s.price === null || s.priceDate === null) continue
+    const t = s.target
+    const where = t.accountName ? ` (${t.accountName})` : ''
+    const url = `/portfolio/stock/${t.symbol}${t.accountId ? `?account=${t.accountId}` : ''}`
+    const on = s.priceDate
+    const price = `৳${s.price.toFixed(2)}`
+
+    if (s.buy) {
+      if (s.buy.reached && !t.buyAlertedOn) {
+        send.push({
+          targetId: t.id,
+          side: 'buy',
+          date: on,
+          title: `${t.symbol} is at your buy price`,
+          body: `Closed ${price} on ${on} — at or below your ৳${s.buy.level.toFixed(2)} target${where}.`,
+          url,
+        })
+      } else if (!s.buy.reached && t.buyAlertedOn) {
+        rearm.push({ targetId: t.id, side: 'buy' })
+      }
+    }
+
+    if (s.sell) {
+      if (s.sell.reached && !t.sellAlertedOn && s.position) {
+        const vsCost =
+          s.breakEven === null
+            ? ''
+            : s.price >= s.breakEven
+              ? ` Break-even is ৳${s.breakEven.toFixed(2)}.`
+              : ` Below break-even ৳${s.breakEven.toFixed(2)} — selling now loses money.`
+        send.push({
+          targetId: t.id,
+          side: 'sell',
+          date: on,
+          title: `${t.symbol} is at your sell price`,
+          body: `Closed ${price} on ${on} — at or above your ৳${s.sell.level.toFixed(2)} target${where}; ${s.position.quantity.toLocaleString('en-US')} held.${vsCost}`,
+          url,
+        })
+      } else if (!s.sell.reached && t.sellAlertedOn) {
+        rearm.push({ targetId: t.id, side: 'sell' })
+      }
+    }
+  }
+
+  return { send, rearm }
 }
 
 /** Reached first, then near, then the rest; each by symbol. */

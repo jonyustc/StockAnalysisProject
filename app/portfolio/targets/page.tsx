@@ -5,9 +5,12 @@ import { breakEvenPrice, priceForGain, type SideStatus } from '@/lib/targets'
 import { formatTradeDate } from '@/lib/trading-calendar'
 import { formatPercent } from '@/lib/units'
 
+import { listDevices, vapidPublicKey } from '../push'
 import { targetStatuses } from '../target-data'
 import { PortfolioNav, ROW, TD, TH, THEAD_ROW } from '../ui'
 import { deleteTarget } from './actions'
+import { PushAlerts } from './PushAlerts'
+import { removeDevice } from './push-actions'
 import { TargetForm, type Suggestion } from './TargetForm'
 
 export const dynamic = 'force-dynamic'
@@ -15,10 +18,11 @@ export const dynamic = 'force-dynamic'
 const taka = (v: number | null) => (v === null ? '—' : `৳${v.toFixed(2)}`)
 
 export default async function TargetsPage() {
-  const [{ statuses, transactions, quotes, positionOf, rateOf }, accounts, companies] = await Promise.all([
+  const [{ statuses, transactions, quotes, positionOf, rateOf }, accounts, companies, devices] = await Promise.all([
     targetStatuses(),
     listBoAccounts(),
     listCompanyNames(),
+    listDevices(),
   ])
 
   const reached = statuses.filter((s) => s.buy?.reached || s.sell?.reached)
@@ -75,6 +79,28 @@ export default async function TargetsPage() {
             : 'No target reached at the latest close.'}
           {near.length > 0 ? ` Within ${formatPercent(0.02, 0)}: ${near.map((s) => s.target.symbol).join(', ')}.` : ''}
         </p>
+      ) : null}
+
+      <PushAlerts publicKey={vapidPublicKey()} />
+      {devices.length > 0 ? (
+        <details className="text-xs text-neutral-500">
+          <summary className="cursor-pointer select-none">
+            Alerts go to {devices.length} device{devices.length === 1 ? '' : 's'}
+          </summary>
+          <ul className="mt-2 space-y-1 pl-4">
+            {devices.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-3">
+                <span className="text-neutral-300">{d.label ?? 'A browser'}</span>
+                <span>added {d.createdAt.toISOString().slice(0, 10)}</span>
+                <span>{d.lastSentAt ? `last alert ${d.lastSentAt.toISOString().slice(0, 10)}` : 'no alert yet'}</span>
+                <form action={removeDevice}>
+                  <input type="hidden" name="id" value={d.id} />
+                  <button type="submit" className="text-neutral-600 hover:text-red-400">Remove</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       <TargetForm symbols={symbols} accounts={accounts.map((a) => ({ id: a.id, name: a.name }))} suggestions={suggestions} />

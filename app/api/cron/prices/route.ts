@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
 import { getPool } from '@/db/client'
+import { runTargetAlerts } from '@/app/portfolio/push'
 import { ingestDailyPrices } from '@/lib/ingest-prices'
 
 /**
@@ -44,7 +45,18 @@ export async function GET(request: NextRequest) {
   try {
     const summary = await ingestDailyPrices(getPool())
 
-    return NextResponse.json(summary, { status: summary.ok ? 200 : 502 })
+    // With the day's closes in, check price targets and send system alerts.
+    // Kept apart from the price job's own result: an alert problem must not
+    // make the prices look failed, nor stop them being saved.
+    let alerts: Awaited<ReturnType<typeof runTargetAlerts>> | { error: string }
+    try {
+      alerts = await runTargetAlerts()
+    } catch (error) {
+      alerts = { error: error instanceof Error ? error.message : String(error) }
+      console.error('[cron/prices] target alerts', alerts.error)
+    }
+
+    return NextResponse.json({ ...summary, alerts }, { status: summary.ok ? 200 : 502 })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error('[cron/prices]', message)

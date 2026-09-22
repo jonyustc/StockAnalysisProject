@@ -72,6 +72,9 @@ export async function saveTarget(_previous: TargetResult | null, formData: FormD
       buyBelow: buyBelow === null ? null : String(buyBelow),
       sellAbove: sellAbove === null ? null : String(sellAbove),
       note,
+      // A changed target is a new one to watch: its next crossing alerts.
+      buyAlertedOn: null,
+      sellAlertedOn: null,
     }
     if (existing) await tx.update(priceTargets).set(values).where(eq(priceTargets.id, existing.id))
     else await tx.insert(priceTargets).values({ companyId: company.id, boAccountId: accountId, ...values })
