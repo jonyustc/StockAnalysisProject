@@ -42,7 +42,21 @@ function statement(overrides: { rows?: TextItem[][]; total?: string[]; asOf?: st
     ...line(690, [[11, 'Marginable Securities']]),
     ...rows.flat(),
     ...line(611, [[11, 'Total:'], ...(overrides.total ?? ['2,001.67', '2,050.00', '100', '48.33', '2.41']).map((v, i) => [[329, 427, 480, 531, 564][i], v] as [number, string])]),
-    ...line(575, [[13, 'Cash Balance'], [143, ':'], [177, '500.25']]),
+    ...line(575, [[13, 'Cash Balance'], [143, ':'], [177, '500.25'], [356, ':'], [407, '2,050.00']]),
+    // Account status: two columns of "label : value" side by side.
+    ...line(565, [[236, 'Total Portfolio Value(PV)'], [358, ':'], [407, '2,050.00'], [469, 'Total'], [567, '100']]),
+    ...line(544, [[13, 'Blocked for IPO/Auction'], [143, ':'], [195, '0.00'], [236, 'Equity(EQ)'], [358, ':'], [407, '2,501.92']]),
+    ...line(507, [[11, 'Deposit & Withdraw Statu'], [236, 'Loan Ratio (LR)'], [356, ':'], [435, '0.00']]),
+    ...line(493, [[11, 'Deposit'], [142, ':'], [167, '1,800.00']]),
+    ...line(480, [[11, 'IPO/Auction Refund Reciv'], [140, ':'], [195, '40.00']]),
+    ...line(467, [[11, 'Cash Dividend'], [140, ':'], [185, '25.00']]),
+    ...line(454, [[11, 'Share Transfer In'], [142, ':'], [195, '0.00'], [236, 'Purchase Power (PP)'], [358, ':'], [430, '500.25']]),
+    ...line(441, [[80, 'Total Deposit'], [142, ':'], [168, '1,865.00'], [236, 'Exposure on Equity'], [358, ':'], [435, '0.00']]),
+    ...line(424, [[11, 'Withdraw'], [142, ':'], [195, '0.00'], [236, 'Exposure on']]),
+    ...line(412, [[11, 'IPO/Auction Payment'], [140, ':'], [195, '40.00'], [236, 'Marginable'], [297, 'Equity']]),
+    ...line(399, [[11, 'Share Transfer Out'], [142, ':'], [195, '0.00']]),
+    ...line(387, [[74, 'Total Withdraw'], [195, '40.00']]),
+    ...line(369, [[11, 'Realized Gain/Loss'], [142, ':'], [177, '120.00']]),
     ...line(284, [[11, 'Cash Dividend Receivable']]),
     ...line(262, [[9, 'SL'], [30, 'Company Name'], [179, 'Type'], [227, 'BO Holding'], [311, 'Rate'], [348, 'Cash Entitlemen'], [431, 'Record Dat'], [501, 'Deposit To']]),
     ...line(248, [[9, '1'], [30, 'Alpha Industries'], [179, 'CASH'], [257, '10.00'], [308, '5.00'], [389, '50.00'], [426, '15-Dec-2025'], [532, 'BO']]),
@@ -127,6 +141,31 @@ describe('parseLankaBanglaPortfolio', () => {
       { companyName: 'Alpha Industries', holding: 10, rate: 5, entitlement: 50, recordDate: '2025-12-15' },
     ])
     assert.deepEqual(s.issues, [])
+  })
+
+  it('reads the account status, each value from its own column', () => {
+    assert.deepEqual(s.accountStatus, {
+      marketValue: 2050,
+      equity: 2501.92,
+      deposit: 1800, // not "Total Deposit" on a line below
+      ipoRefund: 40,
+      cashDividend: 25, // not "Cash Dividend Receivable" further down
+      shareTransferIn: 0,
+      totalDeposit: 1865,
+      withdraw: 0, // not "Total Withdraw"
+      ipoPayment: 40,
+      shareTransferOut: 0,
+      totalWithdraw: 40,
+      realisedGain: 120,
+    })
+  })
+
+  it('flags account totals that do not match their own lines', () => {
+    const items = statement().map((item) =>
+      item.str === '1,865.00' ? { ...item, str: '9,999.00' } : item,
+    )
+    const bad = parse(items)
+    assert.ok(bad.issues.some((i) => /Total Deposit/.test(i)))
   })
 
   it('flags a holding whose own arithmetic does not add up', () => {
@@ -267,6 +306,10 @@ describe('real statements (local only)', { skip: realFiles.length === 0 }, () =>
       assert.match(s.boId ?? '', /^\d{16}$/)
       assert.match(s.asOf, /^\d{4}-\d{2}-\d{2}$/)
       assert.ok(s.holdings.length > 0, 'no holdings found')
+      assert.ok(s.accountStatus, 'no account status section found')
+      assert.ok(s.accountStatus.deposit !== null, 'no deposit figure')
+      assert.ok(s.accountStatus.realisedGain !== null, 'no realised gain figure')
+      // Includes the account-status totals cross-checks.
       assert.deepEqual(s.issues, [], 'statement-level issues')
       for (const h of s.holdings) assert.deepEqual(h.issues, [], `${h.symbol} failed its own arithmetic`)
     })

@@ -735,3 +735,43 @@ export const portfolioTransactionsRelations = relations(portfolioTransactions, (
 
 export type PortfolioTransactionRow = typeof portfolioTransactions.$inferSelect
 export type NewPortfolioTransaction = typeof portfolioTransactions.$inferInsert
+
+/* -------------------------------------------------------------------------- */
+/* account_snapshots                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A BO account's totals as printed on one broker statement. Returns are
+ * computed from a series of these in lib/account-return.ts, never stored.
+ */
+export const accountSnapshots = pgTable(
+  'account_snapshots',
+  {
+    id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+    boAccountId: smallint('bo_account_id')
+      .notNull()
+      .references(() => boAccounts.id, { onDelete: 'cascade' }),
+    asOf: date('as_of').notNull(),
+    broker: text('broker'),
+
+    marketValue: numeric('market_value', { precision: 20, scale: 2 }).notNull(),
+    costOfHoldings: numeric('cost_of_holdings', { precision: 20, scale: 2 }),
+    cashBalance: numeric('cash_balance', { precision: 20, scale: 2 }).notNull(),
+
+    deposit: numeric('deposit', { precision: 20, scale: 2 }).notNull().default('0'),
+    ipoRefund: numeric('ipo_refund', { precision: 20, scale: 2 }).notNull().default('0'),
+    cashDividend: numeric('cash_dividend', { precision: 20, scale: 2 }).notNull().default('0'),
+    shareTransferIn: numeric('share_transfer_in', { precision: 20, scale: 2 }).notNull().default('0'),
+    withdraw: numeric('withdraw', { precision: 20, scale: 2 }).notNull().default('0'),
+    ipoPayment: numeric('ipo_payment', { precision: 20, scale: 2 }).notNull().default('0'),
+    shareTransferOut: numeric('share_transfer_out', { precision: 20, scale: 2 }).notNull().default('0'),
+    realisedGain: numeric('realised_gain', { precision: 20, scale: 2 }).notNull().default('0'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('account_snapshots_one_per_day').on(t.boAccountId, t.asOf),
+    index('account_snapshots_account_idx').on(t.boAccountId, t.asOf),
+  ],
+)

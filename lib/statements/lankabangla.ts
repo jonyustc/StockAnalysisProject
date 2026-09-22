@@ -15,6 +15,7 @@
 
 import { parseReportedNumber } from '../units'
 import type {
+  AccountStatus,
   DividendReceivable,
   ParseResult,
   ParsedStatement,
@@ -247,6 +248,41 @@ export function parseLankaBanglaPortfolio(items: TextItem[]): ParseResult {
     cashBalance = value ?? null
   }
 
+  // --- Account status: lifetime deposits, withdrawals, realised gain --------
+
+  const accountStatus = readAccountStatus(rows)
+
+  if (accountStatus) {
+    const sum = (...values: (number | null)[]) => values.reduce<number>((t, v) => t + (v ?? 0), 0)
+
+    const deposits = sum(
+      accountStatus.deposit,
+      accountStatus.ipoRefund,
+      accountStatus.cashDividend,
+      accountStatus.shareTransferIn,
+    )
+    if (accountStatus.totalDeposit !== null && !close(deposits, accountStatus.totalDeposit, 0.05)) {
+      issues.push(`deposit lines sum to ${deposits.toFixed(2)}, "Total Deposit" says ${accountStatus.totalDeposit}`)
+    }
+
+    const withdrawals = sum(
+      accountStatus.withdraw,
+      accountStatus.ipoPayment,
+      accountStatus.shareTransferOut,
+    )
+    if (accountStatus.totalWithdraw !== null && !close(withdrawals, accountStatus.totalWithdraw, 0.05)) {
+      issues.push(`withdrawal lines sum to ${withdrawals.toFixed(2)}, "Total Withdraw" says ${accountStatus.totalWithdraw}`)
+    }
+
+    if (
+      accountStatus.marketValue !== null &&
+      totals !== null &&
+      !close(accountStatus.marketValue, totals.marketValue, 0.05)
+    ) {
+      issues.push(`portfolio value ${accountStatus.marketValue} disagrees with the holdings total ${totals.marketValue}`)
+    }
+  }
+
   // --- Cash dividends declared but not yet paid -------------------------------
 
   const dividendsReceivable: DividendReceivable[] = []
@@ -289,8 +325,54 @@ export function parseLankaBanglaPortfolio(items: TextItem[]): ParseResult {
       holdings,
       totals,
       cashBalance,
+      accountStatus,
       dividendsReceivable,
       issues,
     },
   }
+}
+
+/**
+ * The value printed after a label: the first number to its right on the same
+ * line, stopping at the next label. The section is laid out as two columns of
+ * "label : value", so running on would read the neighbouring column's figure.
+ */
+function valueAfter(rows: Row[], label: RegExp): number | null {
+  for (const row of rows) {
+    for (let i = 0; i < row.cells.length; i += 1) {
+      if (!label.test(row.cells[i].str)) continue
+
+      for (let j = i + 1; j < row.cells.length; j += 1) {
+        const text = row.cells[j].str
+        if (/^:+$/.test(text)) continue
+        const value = num(text)
+        if (value !== null) return value
+        break // reached the next label with no value in between
+      }
+      return null
+    }
+  }
+  return null
+}
+
+function readAccountStatus(rows: Row[]): AccountStatus | null {
+  // Exact matches where a shorter label is a prefix of a longer one: "Deposit"
+  // must not read "Total Deposit", nor "Cash Dividend" the "Receivable" line.
+  const status: AccountStatus = {
+    marketValue: valueAfter(rows, /^Total Portfolio Value/),
+    equity: valueAfter(rows, /^Equity\s*\(EQ\)$/),
+    deposit: valueAfter(rows, /^Deposit$/),
+    ipoRefund: valueAfter(rows, /^IPO\/Auction Refund/),
+    cashDividend: valueAfter(rows, /^Cash Dividend$/),
+    shareTransferIn: valueAfter(rows, /^Share Transfer In$/),
+    totalDeposit: valueAfter(rows, /^Total Deposit$/),
+    withdraw: valueAfter(rows, /^Withdraw$/),
+    ipoPayment: valueAfter(rows, /^IPO\/Auction Payment/),
+    shareTransferOut: valueAfter(rows, /^Share Transfer Out$/),
+    totalWithdraw: valueAfter(rows, /^Total Withdraw$/),
+    realisedGain: valueAfter(rows, /^Reali[sz]ed Gain/),
+  }
+
+  // A statement without the section at all, rather than one with zeros.
+  return Object.values(status).every((v) => v === null) ? null : status
 }

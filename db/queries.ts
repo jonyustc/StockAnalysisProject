@@ -6,6 +6,7 @@ import type { CorporateActionInput } from '@/lib/corporate-actions'
 
 import { db } from './client'
 import {
+  accountSnapshots,
   boAccounts,
   companies,
   corporateActions,
@@ -401,4 +402,43 @@ export async function getLastJobRun(jobName: string) {
     .limit(1)
 
   return run ?? null
+}
+
+/** Every account snapshot, oldest first, shaped for lib/account-return. */
+export async function listAccountSnapshots() {
+  const rows = await db
+    .select({
+      accountId: accountSnapshots.boAccountId,
+      accountName: boAccounts.name,
+      asOf: accountSnapshots.asOf,
+      marketValue: accountSnapshots.marketValue,
+      costOfHoldings: accountSnapshots.costOfHoldings,
+      cashBalance: accountSnapshots.cashBalance,
+      deposit: accountSnapshots.deposit,
+      shareTransferIn: accountSnapshots.shareTransferIn,
+      withdraw: accountSnapshots.withdraw,
+      shareTransferOut: accountSnapshots.shareTransferOut,
+      cashDividend: accountSnapshots.cashDividend,
+      realisedGain: accountSnapshots.realisedGain,
+    })
+    .from(accountSnapshots)
+    .innerJoin(boAccounts, eq(boAccounts.id, accountSnapshots.boAccountId))
+    .orderBy(asc(accountSnapshots.asOf))
+
+  const n = (v: string | null) => (v === null ? null : Number(v))
+
+  return rows.map((row) => ({
+    accountId: row.accountId,
+    accountName: row.accountName,
+    asOf: row.asOf,
+    marketValue: Number(row.marketValue),
+    costOfHoldings: n(row.costOfHoldings),
+    cashBalance: Number(row.cashBalance),
+    deposit: Number(row.deposit),
+    shareTransferIn: Number(row.shareTransferIn),
+    withdraw: Number(row.withdraw),
+    shareTransferOut: Number(row.shareTransferOut),
+    cashDividend: Number(row.cashDividend),
+    realisedGain: Number(row.realisedGain),
+  }))
 }

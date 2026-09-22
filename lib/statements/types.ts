@@ -44,6 +44,32 @@ export interface DividendReceivable {
   recordDate: string | null
 }
 
+/**
+ * The account-level totals printed under the holdings: "Account Status Till
+ * Today". Lifetime figures, so they carry the history of sales and dividends
+ * that the holdings table alone does not.
+ */
+export interface AccountStatus {
+  /** Holdings at market ("Total Portfolio Value"). */
+  marketValue: number | null
+  /** The broker's margin equity: LOWER of cost and market, plus cash. Not a valuation. */
+  equity: number | null
+
+  deposit: number | null
+  ipoRefund: number | null
+  cashDividend: number | null
+  shareTransferIn: number | null
+  totalDeposit: number | null
+
+  withdraw: number | null
+  ipoPayment: number | null
+  shareTransferOut: number | null
+  totalWithdraw: number | null
+
+  /** Lifetime realised gain on sales, as the broker computes it. */
+  realisedGain: number | null
+}
+
 export interface ParsedStatement {
   broker: string
   format: string
@@ -55,6 +81,7 @@ export interface ParsedStatement {
   holdings: StatementHolding[]
   totals: { costAmount: number; marketValue: number; unrealised: number } | null
   cashBalance: number | null
+  accountStatus: AccountStatus | null
   dividendsReceivable: DividendReceivable[]
   /** Problems with the statement as a whole, e.g. totals that do not sum. */
   issues: string[]

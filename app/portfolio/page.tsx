@@ -3,9 +3,15 @@ import Link from 'next/link'
 import {
   getLastJobRun,
   getLatestQuotes,
+  listAccountSnapshots,
   listBoAccounts,
   listPortfolioTransactions,
 } from '@/db/queries'
+import {
+  lifetimeReturn,
+  yearlyReturns,
+  type AccountSnapshot,
+} from '@/lib/account-return'
 import { buildPortfolio, MIN_DAYS_TO_ANNUALISE } from '@/lib/portfolio'
 import { PRICE_SOURCE_NAME } from '@/lib/prices'
 import { assessFreshness, formatTradeDate, type Freshness } from '@/lib/trading-calendar'
@@ -21,11 +27,12 @@ export default async function PortfolioPage({
   const params = await searchParams
   const accountParam = Number(Array.isArray(params.account) ? params.account[0] : params.account)
 
-  const [transactions, quotes, accounts, lastPriceJob] = await Promise.all([
+  const [transactions, quotes, accounts, lastPriceJob, allSnapshots] = await Promise.all([
     listPortfolioTransactions(),
     getLatestQuotes(),
     listBoAccounts(),
     getLastJobRun('prices'),
+    listAccountSnapshots(),
   ])
 
   const selected = accounts.find((a) => a.id === accountParam) ?? null
@@ -162,6 +169,12 @@ export default async function PortfolioPage({
             emptyText="No open positions in this account."
             priceDates={priceDates}
             newestPrice={newestPrice}
+          />
+
+          <AccountReturns
+            snapshots={
+              selected ? allSnapshots.filter((s) => s.accountId === selected.id) : allSnapshots
+            }
           />
 
           {/* Per-account totals, only when looking at everything and there is
@@ -378,6 +391,167 @@ function Table({
           </tbody>
         </table>
       </div>
+    </section>
+  )
+}
+
+type SnapshotRow = AccountSnapshot & { accountId: number; accountName: string }
+
+function pct(value: number | null): string {
+  return value === null ? '—' : `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`
+}
+
+/**
+ * Returns from broker statement snapshots. Separate from the ledger figures
+ * above on purpose: these come from the broker's lifetime totals, so they
+ * include sales and dividends from before the ledger began, and account
+ * charges that no holding shows.
+ */
+function AccountReturns({ snapshots }: { snapshots: SnapshotRow[] }) {
+  if (snapshots.length === 0) {
+    return (
+      <section className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-3 text-xs text-neutral-500">
+        <p className="text-sm text-neutral-300">Returns</p>
+        <p className="mt-1">
+          No account snapshots yet. Import a broker statement and save it — the account totals on
+          it give your lifetime return straight away, and yearly returns build up from each import.
+        </p>
+      </section>
+    )
+  }
+
+  const byAccount = new Map<number, SnapshotRow[]>()
+  for (const s of snapshots) {
+    if (!byAccount.has(s.accountId)) byAccount.set(s.accountId, [])
+    byAccount.get(s.accountId)!.push(s)
+  }
+
+  const accounts = [...byAccount.values()].map((series) => {
+    const latest = series[series.length - 1]
+    return {
+      name: latest.accountName,
+      latest,
+      life: lifetimeReturn(latest),
+      years: yearlyReturns(series),
+      count: series.length,
+    }
+  })
+
+  // Combined lifetime: sum money in and worth across each account's latest.
+  const moneyIn = accounts.reduce((t, a) => t + a.life.moneyIn, 0)
+  const worth = accounts.reduce((t, a) => t + a.life.worth, 0)
+  const unexplained = accounts.reduce((t, a) => t + (a.life.unexplained ?? 0), 0)
+  const yearly = accounts.flatMap((a) => a.years.map((y) => ({ ...y, name: a.name })))
+  const fewest = Math.min(...accounts.map((a) => a.count))
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-medium text-neutral-300">Returns</h2>
+        <p className="mt-0.5 text-xs text-neutral-500">
+          From the broker&apos;s lifetime totals: what you deposited against what the account is
+          worth. Includes sales and dividends from before this ledger began, and account charges
+          no holding shows. Dividends are counted as return, not as money you put in.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto rounded border border-neutral-800">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-neutral-800 bg-neutral-900/50 text-xs uppercase tracking-wide text-neutral-500">
+              <th className="px-3 py-2 text-left font-medium">Account</th>
+              <th className="px-3 py-2 text-left font-medium">As of</th>
+              <th className="px-3 py-2 text-right font-medium">Money in</th>
+              <th className="px-3 py-2 text-right font-medium">Worth now</th>
+              <th className="px-3 py-2 text-right font-medium">Gain</th>
+              <th className="px-3 py-2 text-right font-medium">Total return</th>
+              <th className="px-3 py-2 text-right font-medium">Realised</th>
+              <th className="px-3 py-2 text-right font-medium">Dividends</th>
+              <th className="px-3 py-2 text-right font-medium" title="Not explained by any line — usually account charges such as the BO maintenance fee">
+                Charges*
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a) => (
+              <tr key={a.name} className="border-b border-neutral-900">
+                <td className="px-3 py-2 text-neutral-300">{a.name}</td>
+                <td className="px-3 py-2 text-xs text-neutral-500">{formatTradeDate(a.latest.asOf)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-400">{formatBDT(a.life.moneyIn)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-200">{formatBDT(a.life.worth)}</td>
+                <td className={`px-3 py-2 text-right tabular-nums ${a.life.gain >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  {formatBDT(a.life.gain)}
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums font-medium ${(a.life.totalReturn ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  {pct(a.life.totalReturn)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-400">{formatBDT(a.life.realised)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-400">{formatBDT(a.life.dividends)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-500">
+                  {a.life.unexplained === null ? '—' : formatBDT(a.life.unexplained)}
+                </td>
+              </tr>
+            ))}
+            {accounts.length > 1 ? (
+              <tr className="bg-neutral-900/40 font-medium">
+                <td className="px-3 py-2 text-neutral-200">Combined</td>
+                <td />
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-300">{formatBDT(moneyIn)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-100">{formatBDT(worth)}</td>
+                <td className={`px-3 py-2 text-right tabular-nums ${worth - moneyIn >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  {formatBDT(worth - moneyIn)}
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums ${worth - moneyIn >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  {pct(moneyIn > 0 ? (worth - moneyIn) / moneyIn : null)}
+                </td>
+                <td colSpan={2} />
+                <td className="px-3 py-2 text-right tabular-nums text-neutral-500">{formatBDT(unexplained)}</td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-neutral-600">
+        * What the named lines do not explain. Inferred, not reported by the broker — in practice
+        account charges such as the annual BO maintenance fee.
+      </p>
+
+      {yearly.length > 0 ? (
+        <div className="overflow-x-auto rounded border border-neutral-800">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-neutral-800 bg-neutral-900/50 text-xs uppercase tracking-wide text-neutral-500">
+                <th className="px-3 py-2 text-left font-medium">Account</th>
+                <th className="px-3 py-2 text-left font-medium">Year</th>
+                <th className="px-3 py-2 text-right font-medium">Return</th>
+                <th className="px-3 py-2 text-left font-medium">Covers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {yearly.map((y) => (
+                <tr key={`${y.name}-${y.year}`} className="border-b border-neutral-900 last:border-0">
+                  <td className="px-3 py-2 text-neutral-300">{y.name}</td>
+                  <td className="px-3 py-2 text-neutral-300">{y.year}</td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${y.return >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                    {pct(y.return)}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-neutral-500">
+                    {formatTradeDate(y.from)} → {formatTradeDate(y.to)}
+                    {y.complete ? null : <span className="ml-2 text-amber-500/80">partial year</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-2.5 text-xs text-neutral-500">
+          Yearly returns need at least two snapshots per account — {fewest === 1 ? 'there is one so far' : `there are ${fewest}`}.
+          They build up from each statement you import and save; import one around every month-end
+          at the least, and deposits made in between are separated from growth automatically.
+        </p>
+      )}
     </section>
   )
 }

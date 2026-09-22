@@ -5,7 +5,8 @@ import { revalidatePath } from 'next/cache'
 
 import { db } from '@/db/client'
 import { listPortfolioTransactions } from '@/db/queries'
-import { boAccounts, companies, portfolioTransactions } from '@/db/schema'
+import { accountSnapshots, boAccounts, companies, portfolioTransactions } from '@/db/schema'
+import { lifetimeReturn, type LifetimeReturn } from '@/lib/account-return'
 import { buildPortfolio } from '@/lib/portfolio'
 import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { extractTextItems, looksScanned } from '@/lib/statements/extract'
@@ -26,6 +27,44 @@ export interface StatementPreview {
   suggestedAccountName?: string
   suggestions?: (Suggestion & { tracked: boolean })[]
   untracked?: string[]
+  /** Account totals to store as a snapshot, and the lifetime return they imply. */
+  snapshot?: SnapshotFigures | null
+  lifetime?: LifetimeReturn | null
+}
+
+/** What a snapshot stores, as the broker printed it. */
+export interface SnapshotFigures {
+  marketValue: number
+  costOfHoldings: number | null
+  cashBalance: number
+  deposit: number
+  ipoRefund: number
+  cashDividend: number
+  shareTransferIn: number
+  withdraw: number
+  ipoPayment: number
+  shareTransferOut: number
+  realisedGain: number
+}
+
+function snapshotFrom(statement: ParsedStatement): SnapshotFigures | null {
+  const status = statement.accountStatus
+  const marketValue = status?.marketValue ?? statement.totals?.marketValue ?? null
+  if (!status || marketValue === null || statement.cashBalance === null) return null
+
+  return {
+    marketValue,
+    costOfHoldings: statement.totals?.costAmount ?? null,
+    cashBalance: statement.cashBalance,
+    deposit: status.deposit ?? 0,
+    ipoRefund: status.ipoRefund ?? 0,
+    cashDividend: status.cashDividend ?? 0,
+    shareTransferIn: status.shareTransferIn ?? 0,
+    withdraw: status.withdraw ?? 0,
+    ipoPayment: status.ipoPayment ?? 0,
+    shareTransferOut: status.shareTransferOut ?? 0,
+    realisedGain: status.realisedGain ?? 0,
+  }
 }
 
 /**
@@ -111,7 +150,13 @@ export async function previewStatement(
 
   const { boId, ...rest } = statement
 
+  // Figures with issues do not become a snapshot: a stored total that does not
+  // add up would quietly skew every return computed from it afterwards.
+  const snapshot = statement.issues.length === 0 ? snapshotFrom(statement) : null
+
   return {
+    snapshot,
+    lifetime: snapshot ? lifetimeReturn({ asOf: statement.asOf, ...snapshot }) : null,
     ok: true,
     message: account
       ? `Read ${statement.holdings.length} holding(s) for ${account.name}, as of ${statement.asOf}.`
@@ -167,7 +212,33 @@ export async function applyStatement(
   const selected = new Set(formData.getAll('selected').map(String))
   rows = rows.filter((row) => selected.has(row.symbol))
 
-  if (rows.length === 0) return { ok: false, message: 'Nothing was ticked, so nothing was recorded.' }
+  // The snapshot comes back from the preview, since the PDF itself is never
+  // kept. Re-check it rather than trust it.
+  let snapshot: SnapshotFigures | null = null
+  const rawSnapshot = String(formData.get('snapshot') ?? '')
+  if (rawSnapshot) {
+    try {
+      const parsed = JSON.parse(rawSnapshot) as SnapshotFigures
+      const amounts = [
+        parsed.marketValue, parsed.cashBalance, parsed.deposit, parsed.ipoRefund,
+        parsed.cashDividend, parsed.shareTransferIn, parsed.withdraw, parsed.ipoPayment,
+        parsed.shareTransferOut,
+      ]
+      const valid =
+        amounts.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0) &&
+        typeof parsed.realisedGain === 'number' && Number.isFinite(parsed.realisedGain) &&
+        (parsed.costOfHoldings === null ||
+          (typeof parsed.costOfHoldings === 'number' && Number.isFinite(parsed.costOfHoldings)))
+      if (!valid) return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
+      snapshot = parsed
+    } catch {
+      return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
+    }
+  }
+
+  if (rows.length === 0 && !snapshot) {
+    return { ok: false, message: 'Nothing was ticked, so nothing was recorded.' }
+  }
 
   for (const row of rows) {
     if (!['buy', 'bonus'].includes(row.txnType)) return { ok: false, message: `Unexpected type for ${row.symbol}.` }
@@ -224,6 +295,34 @@ export async function applyStatement(
       }
     }
 
+    // One snapshot per account per statement date: re-importing the same day
+    // replaces it, rather than counting the day twice.
+    let snapshotSaved = false
+    if (snapshot) {
+      const figures = {
+        broker,
+        marketValue: String(snapshot.marketValue),
+        costOfHoldings: snapshot.costOfHoldings === null ? null : String(snapshot.costOfHoldings),
+        cashBalance: String(snapshot.cashBalance),
+        deposit: String(snapshot.deposit),
+        ipoRefund: String(snapshot.ipoRefund),
+        cashDividend: String(snapshot.cashDividend),
+        shareTransferIn: String(snapshot.shareTransferIn),
+        withdraw: String(snapshot.withdraw),
+        ipoPayment: String(snapshot.ipoPayment),
+        shareTransferOut: String(snapshot.shareTransferOut),
+        realisedGain: String(snapshot.realisedGain),
+      }
+      await tx
+        .insert(accountSnapshots)
+        .values({ boAccountId: accountId, asOf, ...figures })
+        .onConflictDoUpdate({
+          target: [accountSnapshots.boAccountId, accountSnapshots.asOf],
+          set: figures,
+        })
+      snapshotSaved = true
+    }
+
     // Re-derive the ledger now, not from what the browser sent back.
     const transactions = await tx.query.portfolioTransactions.findMany({
       where: eq(portfolioTransactions.boAccountId, accountId),
@@ -247,10 +346,13 @@ export async function applyStatement(
     )
     const heldNow = new Map(current.positions.map((p) => [p.symbol, p.quantity]))
 
-    const companyRows = await tx
-      .select({ id: companies.id, symbol: companies.dseSymbol })
-      .from(companies)
-      .where(inArray(companies.dseSymbol, rows.map((r) => r.symbol)))
+    const companyRows =
+      rows.length === 0
+        ? []
+        : await tx
+            .select({ id: companies.id, symbol: companies.dseSymbol })
+            .from(companies)
+            .where(inArray(companies.dseSymbol, rows.map((r) => r.symbol)))
     const companyId = new Map(companyRows.map((c) => [c.symbol, c.id]))
 
     const recorded: string[] = []
@@ -284,10 +386,15 @@ export async function applyStatement(
       recorded.push(`${row.symbol} ${row.txnType} ${row.quantity}`)
     }
 
+    const parts = [
+      recorded.length > 0 ? `recorded ${recorded.join(', ')}` : null,
+      snapshotSaved ? `saved the ${asOf} account snapshot` : null,
+    ].filter(Boolean)
+
     return {
-      ok: recorded.length > 0,
+      ok: recorded.length > 0 || snapshotSaved,
       message:
-        (recorded.length > 0 ? `${accountName}: recorded ${recorded.join(', ')}.` : 'Nothing recorded.') +
+        (parts.length > 0 ? `${accountName}: ${parts.join('; ')}.` : 'Nothing recorded.') +
         (skipped.length > 0 ? ` Skipped ${skipped.join('; ')}.` : ''),
     }
   })

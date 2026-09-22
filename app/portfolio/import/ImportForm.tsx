@@ -84,6 +84,9 @@ export function ImportForm() {
           <input type="hidden" name="asOf" value={s.asOf} />
           <input type="hidden" name="broker" value={s.broker} />
           <input type="hidden" name="rows" value={JSON.stringify(plan)} />
+          {preview.snapshot ? (
+            <input type="hidden" name="snapshot" value={JSON.stringify(preview.snapshot)} />
+          ) : null}
 
           <section className="grid gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-4">
             <Fact label="Broker" value={s.broker} />
@@ -95,6 +98,33 @@ export function ImportForm() {
             <Fact label="Unrealised" value={taka(s.totals?.unrealised)} />
             <Fact label="Cash balance" value={taka(s.cashBalance)} />
           </section>
+
+          {preview.lifetime ? (
+            <section className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm">
+              <p className="text-neutral-300">
+                Lifetime return on this account:{' '}
+                <strong
+                  className={
+                    (preview.lifetime.totalReturn ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-400'
+                  }
+                >
+                  {preview.lifetime.totalReturn === null
+                    ? '—'
+                    : `${(preview.lifetime.totalReturn * 100).toFixed(2)}%`}
+                </strong>{' '}
+                <span className="text-neutral-500">
+                  ({taka(preview.lifetime.gain)} on {taka(preview.lifetime.moneyIn)} deposited)
+                </span>
+              </p>
+              <p className="mt-1 text-xs text-neutral-500">
+                Realised {taka(preview.lifetime.realised)} · dividends {taka(preview.lifetime.dividends)}
+                {preview.lifetime.unrealised !== null ? ` · unrealised ${taka(preview.lifetime.unrealised)}` : ''}
+                {preview.lifetime.unexplained !== null && Math.abs(preview.lifetime.unexplained) >= 1
+                  ? ` · ${taka(preview.lifetime.unexplained)} not explained by any line — usually account charges`
+                  : ''}
+              </p>
+            </section>
+          ) : null}
 
           <section className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm">
             {preview.account ? (
@@ -212,10 +242,14 @@ export function ImportForm() {
           <div className="flex items-center gap-4 border-t border-neutral-800 pt-4">
             <button
               type="submit"
-              disabled={applying || actionable.length === 0}
+              disabled={applying || (actionable.length === 0 && !preview.snapshot)}
               className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
             >
-              {applying ? 'Recording…' : 'Record ticked rows'}
+              {applying
+                ? 'Saving…'
+                : actionable.length > 0
+                  ? 'Record ticked rows and save snapshot'
+                  : 'Save snapshot'}
             </button>
             {applied ? (
               <p className={`text-sm ${applied.ok ? 'text-emerald-500' : 'text-red-400'}`}>
@@ -223,7 +257,8 @@ export function ImportForm() {
               </p>
             ) : actionable.length === 0 ? (
               <p className="text-xs text-neutral-600">
-                Nothing to record — the ledger already agrees with this statement.
+                Holdings already agree with the ledger. Saving still records today&apos;s account
+                snapshot, which is what yearly returns are built from.
               </p>
             ) : null}
           </div>
