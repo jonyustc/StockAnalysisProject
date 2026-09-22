@@ -37,6 +37,10 @@ yarn-error.log*
 # local database dumps (the git branch 'backups' holds the real ones)
 /.backups/
 
+# broker statements — personal financial documents, never committed
+/.statements/
+*.statement.pdf
+
 # vercel
 .vercel
 

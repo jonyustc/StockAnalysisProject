@@ -699,7 +699,8 @@ export const portfolioTransactions = pgTable(
     /** Null for a cash dividend, which moves no shares. */
     quantity: numeric('quantity', { precision: 20, scale: 4 }),
     /** Zero for a bonus issue — those shares cost nothing. */
-    pricePerShare: numeric('price_per_share', { precision: 18, scale: 4 }),
+    /** Ten decimals, so a price derived from a broker's total reproduces it exactly. */
+    pricePerShare: numeric('price_per_share', { precision: 28, scale: 10 }),
     /** Cash dividend before tax. Only used by 'dividend'. */
     grossAmount: numeric('gross_amount', { precision: 24, scale: 4 }),
 

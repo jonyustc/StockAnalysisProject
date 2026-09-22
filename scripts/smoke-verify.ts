@@ -23,6 +23,13 @@ function stub(specifier: string, exports: unknown) {
 stub('next/cache', { revalidatePath: () => {}, revalidateTag: () => {} })
 stub('server-only', {})
 
+// Actions check the session themselves; a script has no cookie, so stand in
+// for a signed-in user. This never ships — it only exists in this script.
+stub('../lib/session', {
+  hasSession: async () => true,
+  NOT_SIGNED_IN: { ok: false, message: 'Not signed in.' },
+})
+
 const SENTINEL_FISCAL_YEAR = 1901
 
 function form(values: Record<string, string>): FormData {

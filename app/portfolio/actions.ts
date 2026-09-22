@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 
 import { db } from '@/db/client'
+import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { boAccounts, companies, portfolioTransactions } from '@/db/schema'
 import { parseReportedNumber } from '@/lib/units'
 
@@ -23,6 +24,8 @@ export async function addTransaction(
   _previous: TransactionResult | null,
   formData: FormData,
 ): Promise<TransactionResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
   const symbol = String(formData.get('symbol') ?? '').toUpperCase()
   const tradeDate = String(formData.get('tradeDate') ?? '').trim()
   const txnType = String(formData.get('txnType') ?? '') as TxnType
@@ -106,6 +109,8 @@ export async function addBoAccount(
   _previous: TransactionResult | null,
   formData: FormData,
 ): Promise<TransactionResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
   const name = String(formData.get('name') ?? '').trim()
   // CDBL BO IDs are sixteen digits; people paste them with spaces or dashes.
   const boNumber = String(formData.get('boNumber') ?? '').replace(/[\s-]/g, '') || null
@@ -132,6 +137,8 @@ export async function addBoAccount(
 }
 
 export async function deleteTransaction(formData: FormData): Promise<void> {
+  if (!(await hasSession())) return
+
   const id = Number(formData.get('id'))
   if (!Number.isInteger(id)) return
 

@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 
 import { db } from '@/db/client'
+import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { getPeriodWithFacts } from '@/db/queries'
 import { companies, financialFacts, fiscalPeriods, lineItemDefs, sourceDocuments } from '@/db/schema'
 import { fiscalYearBounds } from '@/lib/fiscal'
@@ -40,6 +41,8 @@ export async function saveAnnualEntry(
   _previous: SaveResult | null,
   formData: FormData,
 ): Promise<SaveResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
   const symbol = String(formData.get('symbol') ?? '').toUpperCase()
   const fiscalYear = Number(formData.get('fiscalYear'))
   const basis = String(formData.get('basis') ?? 'consolidated') as 'consolidated' | 'standalone'
@@ -240,6 +243,8 @@ export async function verifyAnnualEntry(
   _previous: VerifyResult | null,
   formData: FormData,
 ): Promise<VerifyResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
   const symbol = String(formData.get('symbol') ?? '').toUpperCase()
   const fiscalYear = Number(formData.get('fiscalYear'))
   const basis = String(formData.get('basis') ?? 'consolidated') as 'consolidated' | 'standalone'

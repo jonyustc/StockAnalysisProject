@@ -40,12 +40,20 @@ export default async function PortfolioPage({
             reducing it. Derived from the ledger, never stored.
           </p>
         </div>
-        <Link
-          href="/portfolio/transactions"
-          className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
-        >
-          Transactions
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            href="/portfolio/import"
+            className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+          >
+            Import statement
+          </Link>
+          <Link
+            href="/portfolio/transactions"
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
+          >
+            Transactions
+          </Link>
+        </div>
       </header>
 
       {transactions.length === 0 ? (

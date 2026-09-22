@@ -35,6 +35,13 @@ stub('next/cache', { revalidatePath: () => {}, revalidateTag: () => {} })
 // server-only resolves to its throwing client entry. Neutralise it.
 stub('server-only', {})
 
+// Actions check the session themselves; a script has no cookie, so stand in
+// for a signed-in user. This never ships — it only exists in this script.
+stub('../lib/session', {
+  hasSession: async () => true,
+  NOT_SIGNED_IN: { ok: false, message: 'Not signed in.' },
+})
+
 function form(values: Record<string, string>): FormData {
   const data = new FormData()
   for (const [key, value] of Object.entries(values)) data.append(key, value)
