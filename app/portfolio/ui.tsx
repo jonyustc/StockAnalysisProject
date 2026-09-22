@@ -60,7 +60,7 @@ export function AccountFilter({
 }) {
   if (accounts.length < 2) return null
   return (
-    <nav className="flex flex-wrap items-center gap-2 text-xs">
+    <nav className="flex flex-wrap items-center gap-2 text-xs print:hidden">
       <span className="text-neutral-600">Account:</span>
       <FilterLink href={basePath} active={selectedId === null}>
         All
@@ -68,7 +68,7 @@ export function AccountFilter({
       {accounts.map((account) => (
         <FilterLink
           key={account.id}
-          href={`${basePath}?account=${account.id}`}
+          href={`${basePath}${basePath.includes('?') ? '&' : '?'}account=${account.id}`}
           active={selectedId === account.id}
         >
           {account.name}
@@ -79,21 +79,27 @@ export function AccountFilter({
 }
 
 /** The portfolio section tabs. */
-export function PortfolioNav({ current }: { current: 'holdings' | 'trading' | 'dividends' | 'cash' | 'checks' }) {
+export function PortfolioNav({
+  current,
+}: {
+  current: 'holdings' | 'trading' | 'targets' | 'dividends' | 'cash' | 'tax' | 'checks'
+}) {
   const tabs = [
     { key: 'holdings', href: '/portfolio', label: 'Holdings' },
     { key: 'trading', href: '/portfolio/trading', label: 'Trading' },
+    { key: 'targets', href: '/portfolio/targets', label: 'Targets' },
     { key: 'dividends', href: '/portfolio/dividends', label: 'Dividends' },
     { key: 'cash', href: '/portfolio/cash', label: 'Cash & withdrawals' },
+    { key: 'tax', href: '/portfolio/tax', label: 'Tax year' },
     { key: 'checks', href: '/portfolio/checks', label: 'Checks' },
   ] as const
   return (
-    <nav className="flex gap-1 border-b border-neutral-800 text-sm">
+    <nav className="-mx-4 flex gap-1 overflow-x-auto border-b border-neutral-800 px-4 text-sm sm:mx-0 sm:px-0 print:hidden">
       {tabs.map((tab) => (
         <Link
           key={tab.key}
           href={tab.href}
-          className={`-mb-px border-b-2 px-3 py-1.5 ${
+          className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-1.5 ${
             current === tab.key
               ? 'border-sky-500 text-neutral-100'
               : 'border-transparent text-neutral-500 hover:text-neutral-300'

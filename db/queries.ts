@@ -17,6 +17,7 @@ import {
   ledgerImports,
   lineItemDefs,
   portfolioTransactions,
+  priceTargets,
   sectors,
   sourceDocuments,
 } from './schema'
@@ -495,4 +496,41 @@ export async function listLedgerImports() {
     closingBalance: Number(row.closingBalance),
     importedAt: row.importedAt,
   }))
+}
+
+/** Every price target, with its stock and account. */
+export async function listPriceTargets() {
+  const rows = await db
+    .select({
+      id: priceTargets.id,
+      symbol: companies.dseSymbol,
+      accountId: priceTargets.boAccountId,
+      accountName: boAccounts.name,
+      buyBelow: priceTargets.buyBelow,
+      sellAbove: priceTargets.sellAbove,
+      note: priceTargets.note,
+      updatedAt: priceTargets.updatedAt,
+    })
+    .from(priceTargets)
+    .innerJoin(companies, eq(companies.id, priceTargets.companyId))
+    .leftJoin(boAccounts, eq(boAccounts.id, priceTargets.boAccountId))
+    .orderBy(asc(companies.dseSymbol))
+
+  return rows.map((row) => ({
+    ...row,
+    buyBelow: row.buyBelow === null ? null : Number(row.buyBelow),
+    sellAbove: row.sellAbove === null ? null : Number(row.sellAbove),
+  }))
+}
+
+/** Each company's last close on or before a date, e.g. a year end. */
+export async function getClosesOnOrBefore(date: string) {
+  const rows = await db.execute<{ dse_symbol: string; trade_date: string; close_price: string }>(sql`
+    SELECT DISTINCT ON (c.dse_symbol) c.dse_symbol, p.trade_date, p.close_price
+      FROM daily_prices p
+      JOIN companies c ON c.id = p.company_id
+     WHERE p.trade_date <= ${date}
+     ORDER BY c.dse_symbol, p.trade_date DESC
+  `)
+  return new Map(rows.rows.map((r) => [r.dse_symbol, { close: Number(r.close_price), tradeDate: r.trade_date }]))
 }

@@ -17,6 +17,7 @@ import { PRICE_SOURCE_NAME } from '@/lib/prices'
 import { assessFreshness, formatTradeDate, type Freshness } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
 
+import { targetStatuses } from './target-data'
 import { AccountFilter, PortfolioNav, Stat } from './ui'
 
 export const dynamic = 'force-dynamic'
@@ -87,6 +88,10 @@ export default async function PortfolioPage({
     totalReturn: deposited - withdrawn > 0 ? (equity - (deposited - withdrawn)) / (deposited - withdrawn) : null,
   }
 
+  // Targets the latest close has reached, as a reminder here.
+  const { statuses } = await targetStatuses({ transactions, quotes })
+  const reachedTargets = statuses.filter((s) => s.buy?.reached || s.sell?.reached)
+
   // Sector weights, by market value.
   const sectorOf = new Map(transactions.map((t) => [t.symbol, t.sector ?? 'Unclassified']))
   const bySector = new Map<string, number>()
@@ -143,6 +148,19 @@ export default async function PortfolioPage({
                 <p key={warning}>{warning}</p>
               ))}
             </div>
+          ) : null}
+
+          {reachedTargets.length > 0 ? (
+            <Link
+              href="/portfolio/targets"
+              className="block rounded border border-emerald-900/60 bg-emerald-950/20 px-4 py-2.5 text-sm text-emerald-200/90 hover:border-emerald-700"
+            >
+              {reachedTargets.length} price target{reachedTargets.length === 1 ? '' : 's'} reached:{' '}
+              {reachedTargets
+                .map((s) => `${s.target.symbol} ${s.buy?.reached ? `at or below ৳${s.buy.level.toFixed(2)}` : `at or above ৳${s.sell!.level.toFixed(2)}`}`)
+                .join('; ')}{' '}
+              →
+            </Link>
           ) : null}
 
           <section className="space-y-1.5">

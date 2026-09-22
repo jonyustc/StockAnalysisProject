@@ -853,3 +853,21 @@ export const ledgerImports = pgTable(
   },
   (t) => [index('ledger_imports_account_idx').on(t.boAccountId, t.periodTo)],
 )
+
+/* -------------------------------------------------------------------------- */
+/* price_targets                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** "Buy below" and "sell above" for a stock, in one account or any. */
+export const priceTargets = pgTable('price_targets', {
+  id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+  companyId: bigint('company_id', { mode: 'number' })
+    .notNull()
+    .references(() => companies.id, { onDelete: 'cascade' }),
+  boAccountId: smallint('bo_account_id').references(() => boAccounts.id, { onDelete: 'cascade' }),
+  buyBelow: numeric('buy_below', { precision: 18, scale: 4 }),
+  sellAbove: numeric('sell_above', { precision: 18, scale: 4 }),
+  note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})

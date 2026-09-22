@@ -13,7 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen bg-neutral-950 text-neutral-200 antialiased">
-        <header className="border-b border-neutral-800">
+        <header className="border-b border-neutral-800 print:hidden">
           <div className="mx-auto flex max-w-6xl items-baseline gap-6 px-6 py-4">
             <Link href="/" className="text-sm font-semibold tracking-wide text-neutral-100">
               DSE RESEARCH
