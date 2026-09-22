@@ -5,7 +5,13 @@ import { revalidatePath } from 'next/cache'
 
 import { db } from '@/db/client'
 import { listCompanyNames, listPortfolioTransactions } from '@/db/queries'
-import { accountSnapshots, boAccounts, companies, portfolioTransactions } from '@/db/schema'
+import {
+  accountSnapshots,
+  boAccounts,
+  companies,
+  portfolioTransactions,
+  type SnapshotHolding,
+} from '@/db/schema'
 import { lifetimeReturn, type LifetimeReturn } from '@/lib/account-return'
 import {
   alreadyRecorded,
@@ -92,6 +98,8 @@ export interface SnapshotFigures {
   shareTransferOut: number
   realisedGain: number
   dividendsReceivable: StoredReceivable[]
+  /** Each holding as printed, for checking the ledger against later. */
+  holdings: SnapshotHolding[]
 }
 
 function snapshotFrom(
@@ -115,6 +123,11 @@ function snapshotFrom(
     shareTransferOut: status.shareTransferOut ?? 0,
     realisedGain: status.realisedGain ?? 0,
     dividendsReceivable: receivables,
+    holdings: statement.holdings.map((h) => ({
+      symbol: h.symbol,
+      quantity: h.totalQty,
+      costAmount: h.costAmount,
+    })),
   }
 }
 
@@ -300,6 +313,22 @@ interface PlannedRow {
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
+/** Holdings come back from the browser too; keep only well-formed ones. */
+function cleanHoldings(value: unknown): SnapshotHolding[] | null {
+  if (!Array.isArray(value)) return null
+  const ok = value.every(
+    (h) =>
+      h &&
+      typeof h === 'object' &&
+      typeof h.symbol === 'string' &&
+      /^[A-Z0-9][A-Z0-9&\-.]{1,19}$/.test(h.symbol) &&
+      Number.isFinite(h.quantity) &&
+      h.quantity >= 0 &&
+      Number.isFinite(h.costAmount),
+  )
+  return ok ? value.map((h) => ({ symbol: h.symbol, quantity: h.quantity, costAmount: h.costAmount })) : null
+}
+
 /** Receivables come back from the browser; keep only well-formed entries. */
 function cleanReceivables(value: unknown): StoredReceivable[] | null {
   if (!Array.isArray(value)) return null
@@ -371,7 +400,11 @@ export async function applyStatement(
       if (!valid || !receivables) {
         return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
       }
-      snapshot = { ...parsed, dividendsReceivable: receivables }
+      const holdings = cleanHoldings(parsed.holdings ?? [])
+      if (!holdings) {
+        return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
+      }
+      snapshot = { ...parsed, dividendsReceivable: receivables, holdings }
     } catch {
       return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
     }
@@ -474,6 +507,7 @@ export async function applyStatement(
         shareTransferOut: String(snapshot.shareTransferOut),
         realisedGain: String(snapshot.realisedGain),
         dividendsReceivable: snapshot.dividendsReceivable,
+        holdings: snapshot.holdings,
       }
       await tx
         .insert(accountSnapshots)
@@ -500,6 +534,7 @@ export async function applyStatement(
       grossAmount: t.grossAmount === null ? null : Number(t.grossAmount),
       commission: Number(t.commission),
       taxWithheld: Number(t.taxWithheld),
+      recordDate: t.recordDate,
     }))
     const current = buildPortfolio(ledger, new Map(), new Date(), accountId)
     const heldNow = new Map(current.positions.map((p) => [p.symbol, p.quantity]))
@@ -537,6 +572,7 @@ export async function applyStatement(
         pricePerShare: String(row.pricePerShare),
         commission: '0',
         taxWithheld: '0',
+        source: 'statement',
         notes:
           row.kind === 'opening'
             ? `Opening position from the ${statementLabel}. Cost is the broker's total, commission included.`
@@ -566,6 +602,8 @@ export async function applyStatement(
         grossAmount: String(d.gross),
         taxWithheld: String(d.taxWithheld),
         commission: '0',
+        source: 'statement',
+        recordDate: d.recordDate,
         notes: `Paid between statements; found by the ${statementLabel}. Record date ${d.recordDate ?? 'unknown'}. Tax inferred from the cash credited.`,
       })
       ledger.push({
@@ -578,6 +616,7 @@ export async function applyStatement(
         grossAmount: d.gross,
         commission: 0,
         taxWithheld: d.taxWithheld,
+        recordDate: d.recordDate,
       })
       recorded.push(`${symbol} dividend ৳${d.gross.toFixed(2)}`)
     }
@@ -638,31 +677,57 @@ export async function applyLedgerImport(
     return { ok: false, message: 'This ledger has problems that stop it being imported.' }
   }
 
+  const openingBalance = Number(formData.get('openingBalance'))
+  const closingBalance = Number(formData.get('closingBalance'))
+  if (!Number.isFinite(openingBalance) || !Number.isFinite(closingBalance)) {
+    return { ok: false, message: 'Missing the ledger balances. Upload the ledger again.' }
+  }
+
+  // Rows the preview saw in the period: those it replaces, and hand-entered
+  // ones it keeps unless the person ticked them for removal.
+  const replacedIds = plan.replaced.map((r) => Number(r.id))
+  const manualIds = plan.keptManual.map((r) => Number(r.id))
+  const removeManual = formData.getAll('removeManual').map(Number).filter((id) => manualIds.includes(id))
+
   const broker = String(formData.get('broker') ?? '').trim() || null
   const source = `${broker ?? 'broker'} ledger ${from} to ${to}`
 
-  const result = await db.transaction(async (tx) => {
-    const account = await resolveAccount(tx, formData, broker, source)
-    if ('error' in account) return { ok: false, message: account.error }
+  // A refusal rolls everything back, account creation included; its message
+  // is kept here to report once the transaction has unwound.
+  let refusal: ApplyResult | null = null
+  const result = await db
+    .transaction(async (tx) => {
+      const account = await resolveAccount(tx, formData, broker, source)
+      if ('error' in account) return { ok: false, message: account.error }
 
-    const outcome = await applyLedger(
-      tx,
-      account.id,
-      { from, to, trades: plan.trades, cash: plan.cash },
-      plan.replaced.map((r) => Number(r.id)),
-      source,
-    )
-    // Nothing half-written: a refusal rolls the account creation back too.
-    if (!outcome.ok) tx.rollback()
-    return { ok: outcome.ok, message: `${account.name}: ${outcome.message}` }
-  }).catch((error: unknown) => {
-    if (error instanceof Error && /rollback/i.test(error.message)) {
-      return { ok: false, message: 'The account’s trades changed since the preview. Upload the ledger again.' }
-    }
-    throw error
-  })
+      const outcome = await applyLedger(
+        tx,
+        account.id,
+        {
+          from,
+          to,
+          openingBalance,
+          closingBalance,
+          trades: plan.trades,
+          cash: plan.cash,
+          seen: [...replacedIds, ...manualIds],
+          remove: [...replacedIds, ...removeManual],
+          confirmHoldingChange: formData.get('confirmHoldings') === '1',
+        },
+        source,
+      )
+      if (!outcome.ok) {
+        refusal = { ok: false, message: outcome.message }
+        tx.rollback()
+      }
+      return { ok: true, message: `${account.name}: ${outcome.message}` }
+    })
+    .catch((error: unknown) => {
+      if (refusal) return refusal
+      throw error
+    })
 
-  revalidatePortfolio()
+  if (result.ok) revalidatePortfolio()
   return result
 }
 

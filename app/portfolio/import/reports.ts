@@ -4,9 +4,9 @@ import { and, eq, gte, inArray, lte } from 'drizzle-orm'
 
 import { db } from '@/db/client'
 import { listCompanyNames, listPortfolioTransactions } from '@/db/queries'
-import { boAccounts, cashMovements, companies, portfolioTransactions } from '@/db/schema'
+import { boAccounts, cashMovements, companies, ledgerImports, portfolioTransactions } from '@/db/schema'
 import { alreadyRecorded } from '@/lib/dividends'
-import type { PortfolioTransaction } from '@/lib/portfolio'
+import { buildHolding, type PortfolioTransaction } from '@/lib/portfolio'
 import { parseLankaBanglaDividends } from '@/lib/statements/lankabangla-dividends'
 import { parseLankaBanglaLedger } from '@/lib/statements/lankabangla-ledger'
 import { parseLankaBanglaPnl } from '@/lib/statements/lankabangla-pnl'
@@ -47,8 +47,9 @@ export interface LedgerPreview {
   boId: string | null
   account: { id: number; name: string } | null
   suggestedAccountName: string
-  plan: Omit<LedgerPlan, 'replaced'> & {
-    replaced: { id: number; symbol: string; tradeDate: string; txnType: string; quantity: number | null }[]
+  plan: Omit<LedgerPlan, 'replaced' | 'keptManual'> & {
+    replaced: (BriefRow & { reason: string })[]
+    keptManual: BriefRow[]
   }
   summary: {
     buys: number
@@ -82,6 +83,15 @@ export interface PnlPreview {
 
 type Failure = { ok: false; message: string }
 
+interface BriefRow {
+  id: number
+  symbol: string
+  tradeDate: string
+  txnType: string
+  quantity: number | null
+  pricePerShare: number | null
+}
+
 async function accountByBoId(boId: string | null) {
   if (!boId) return null
   const [account] = await db
@@ -101,6 +111,15 @@ const header = (h: { broker: string; clientCode: string | null; boId: string | n
 })
 
 type LedgerRow = Awaited<ReturnType<typeof listPortfolioTransactions>>[number]
+
+const brief = (t: LedgerRow): BriefRow => ({
+  id: t.id,
+  symbol: t.symbol,
+  tradeDate: t.tradeDate,
+  txnType: t.txnType,
+  quantity: t.quantity,
+  pricePerShare: t.pricePerShare,
+})
 
 export async function previewLedger(items: TextItem[]): Promise<LedgerPreview | Failure> {
   const parsed = parseLankaBanglaLedger(items)
@@ -132,13 +151,8 @@ export async function previewLedger(items: TextItem[]): Promise<LedgerPreview | 
     suggestedAccountName: `LankaBangla ${ledger.clientCode ?? ''} (${ledger.accountType ?? 'account'})`.trim(),
     plan: {
       ...plan,
-      replaced: (plan.replaced as LedgerRow[]).map((t) => ({
-        id: t.id,
-        symbol: t.symbol,
-        tradeDate: t.tradeDate,
-        txnType: t.txnType,
-        quantity: t.quantity,
-      })),
+      replaced: plan.replaced.map((t) => ({ ...brief(t as unknown as LedgerRow), reason: t.reason })),
+      keptManual: plan.keptManual.map((t) => brief(t as unknown as LedgerRow)),
     },
     summary: {
       buys: plan.trades.filter((t) => t.txnType === 'buy').length,
@@ -257,8 +271,8 @@ const CASH_KINDS = ['deposit', 'withdrawal', 'fee', 'dividend', 'ipo'] as const
 
 /** Everything the browser sent back is re-checked; none of it is trusted. */
 export function validLedgerPlan(value: unknown, from: string, to: string): string | null {
-  const plan = value as { trades?: unknown; cash?: unknown; replaced?: unknown; newSymbols?: unknown }
-  if (!plan || !Array.isArray(plan.trades) || !Array.isArray(plan.cash) || !Array.isArray(plan.replaced)) {
+  const plan = value as { trades?: unknown; cash?: unknown; replaced?: unknown; keptManual?: unknown }
+  if (!plan || !Array.isArray(plan.trades) || !Array.isArray(plan.cash) || !Array.isArray(plan.replaced) || !Array.isArray(plan.keptManual)) {
     return 'The import plan could not be read.'
   }
   const inRange = (d: unknown) => typeof d === 'string' && DATE.test(d) && d >= from && d <= to
@@ -284,39 +298,95 @@ export function validLedgerPlan(value: unknown, from: string, to: string): strin
   return null
 }
 
+export interface LedgerApplyInput {
+  from: string
+  to: string
+  openingBalance: number
+  closingBalance: number
+  trades: PlannedTrade[]
+  cash: PlannedCash[]
+  /** Every buy and sell in the period the preview saw. */
+  seen: number[]
+  /** Of those, the ones to delete: replaced rows plus hand-entered rows the person chose to remove. */
+  remove: number[]
+  /** The person has seen, and accepted, that holdings will change. */
+  confirmHoldingChange: boolean
+}
+
 /**
- * Write a ledger's history for one account: its trades replace the account's
- * buys and sells in the period, its cash lines replace the account's cash
+ * Write a ledger's history for one account: its trades replace what the
+ * preview said they replace, its cash lines replace the account's cash
  * movements in the period. Doing both as replacements is what makes
  * importing the same ledger twice — or an overlapping one — safe.
  *
- * @param expectedReplaced  the ids the preview showed as being replaced. If
- *   the account's trades in the period are no longer exactly those, something
- *   changed since the preview and nothing is written.
+ * Refuses, writing nothing, when the account's trades in the period are not
+ * exactly what the preview saw; when the result would sell shares that were
+ * never bought; or when holdings would change and that was not confirmed.
  */
 export async function applyLedger(
   tx: Tx,
   accountId: number,
-  plan: { from: string; to: string; trades: PlannedTrade[]; cash: PlannedCash[] },
-  expectedReplaced: number[],
+  plan: LedgerApplyInput,
   source: string,
-): Promise<{ ok: boolean; message: string }> {
-  const current = await tx
-    .select({ id: portfolioTransactions.id })
-    .from(portfolioTransactions)
-    .where(
-      and(
-        eq(portfolioTransactions.boAccountId, accountId),
-        inArray(portfolioTransactions.txnType, ['buy', 'sell']),
-        gte(portfolioTransactions.tradeDate, plan.from),
-        lte(portfolioTransactions.tradeDate, plan.to),
-      ),
-    )
-  const currentIds = current.map((r) => r.id).sort((a, b) => a - b)
-  const expected = [...expectedReplaced].sort((a, b) => a - b)
-  if (currentIds.join(',') !== expected.join(',')) {
+): Promise<{ ok: boolean; message: string; needsConfirmation?: boolean }> {
+  const rows = await tx.query.portfolioTransactions.findMany({
+    where: eq(portfolioTransactions.boAccountId, accountId),
+    with: { company: { columns: { dseSymbol: true } } },
+  })
+  const inPeriod = rows.filter(
+    (r) => (r.txnType === 'buy' || r.txnType === 'sell') && r.tradeDate >= plan.from && r.tradeDate <= plan.to,
+  )
+  const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b).join(',')
+  if (sorted(inPeriod.map((r) => r.id)) !== sorted(plan.seen)) {
     return { ok: false, message: 'The account’s trades changed since the preview. Upload the ledger again.' }
   }
+  if (!plan.remove.every((id) => plan.seen.includes(id))) {
+    return { ok: false, message: 'The plan tried to remove an entry the preview did not show.' }
+  }
+
+  // Holdings before and after, from the database as it is now.
+  const asLedger = (r: (typeof rows)[number]): PortfolioTransaction => ({
+    accountId,
+    symbol: r.company.dseSymbol,
+    tradeDate: r.tradeDate,
+    txnType: r.txnType,
+    quantity: r.quantity === null ? null : Number(r.quantity),
+    pricePerShare: r.pricePerShare === null ? null : Number(r.pricePerShare),
+    grossAmount: r.grossAmount === null ? null : Number(r.grossAmount),
+    commission: Number(r.commission),
+    taxWithheld: Number(r.taxWithheld),
+  })
+  const before = rows.map(asLedger)
+  const after: PortfolioTransaction[] = [
+    ...rows.filter((r) => !plan.remove.includes(r.id)).map(asLedger),
+    ...plan.trades.map((t) => ({
+      accountId,
+      symbol: t.symbol,
+      tradeDate: t.date,
+      txnType: t.txnType,
+      quantity: t.quantity,
+      pricePerShare: t.pricePerShare,
+      grossAmount: null,
+      commission: t.commission,
+      taxWithheld: 0,
+    })),
+  ]
+  const held = (list: PortfolioTransaction[], symbol: string) =>
+    buildHolding(symbol, list.filter((t) => t.symbol === symbol), null)
+  const allSymbols = [...new Set([...before, ...after].map((t) => t.symbol))]
+  for (const symbol of allSymbols) {
+    const warnings = held(after, symbol).warnings
+    if (warnings.length > 0) return { ok: false, message: `${symbol}: ${warnings[0]} Nothing was recorded.` }
+  }
+  const changed = allSymbols.filter((sym) => held(before, sym).quantity !== held(after, sym).quantity)
+  if (changed.length > 0 && !plan.confirmHoldingChange) {
+    return {
+      ok: false,
+      needsConfirmation: true,
+      message: `This would change how many shares you hold of ${changed.join(', ')}. Tick the confirmation and import again if that is right.`,
+    }
+  }
+  const currentIds = plan.remove
 
   // Companies the account traded that are not in the database yet: added as
   // untracked, so they are in the ledger without joining the screener.
@@ -357,6 +427,7 @@ export async function applyLedger(
         pricePerShare: String(t.pricePerShare),
         commission: String(t.commission),
         taxWithheld: '0',
+        source: 'ledger',
         notes: `From the ${source}.`,
       })),
     )
@@ -383,6 +454,16 @@ export async function applyLedger(
       })),
     )
   }
+
+  await tx.insert(ledgerImports).values({
+    boAccountId: accountId,
+    periodFrom: plan.from,
+    periodTo: plan.to,
+    openingBalance: String(plan.openingBalance),
+    closingBalance: String(plan.closingBalance),
+    trades: plan.trades.length,
+    cashLines: plan.cash.length,
+  })
 
   return {
     ok: true,
@@ -415,6 +496,7 @@ export async function applyDividends(
     grossAmount: t.grossAmount === null ? null : Number(t.grossAmount),
     commission: Number(t.commission),
     taxWithheld: Number(t.taxWithheld),
+    recordDate: t.recordDate,
   }))
 
   const symbols = [...new Set(dividends.map((d) => d.symbol).filter((s): s is string => !!s))]
@@ -443,6 +525,8 @@ export async function applyDividends(
       grossAmount: String(d.gross),
       taxWithheld: String(d.taxWithheld),
       commission: '0',
+      source: 'dividend_report',
+      recordDate: d.recordDate,
       notes: `From the ${source}. Record date ${d.recordDate}; ${d.holding} shares${d.paidVia === 'elsewhere' ? '; paid outside the broker, tax assumed' : ''}.`,
     })
     ledger.push({
@@ -455,6 +539,7 @@ export async function applyDividends(
       grossAmount: d.gross,
       commission: 0,
       taxWithheld: d.taxWithheld,
+      recordDate: d.recordDate,
     })
     recorded.push(`${d.symbol} ৳${d.gross.toFixed(2)}`)
   }

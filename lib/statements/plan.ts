@@ -35,8 +35,17 @@ export interface LedgerPlan {
   to: string
   trades: PlannedTrade[]
   cash: PlannedCash[]
-  /** Existing buys and sells in the period, replaced by the ledger's. */
-  replaced: Existing[]
+  /**
+   * Existing buys and sells in the period that the ledger replaces: rows an
+   * earlier import wrote, and hand-entered rows that match a ledger trade.
+   */
+  replaced: (Existing & { reason: string })[]
+  /**
+   * Hand-entered buys and sells in the period with no matching ledger trade.
+   * Kept unless the person chooses to remove them: they may be an IPO
+   * allotment or a transfer in, which a cash ledger does not list as a trade.
+   */
+  keptManual: Existing[]
   /** Shares per stock before and after, for every stock either touches. */
   holdings: { symbol: string; before: number; after: number }[]
   /** Symbols with no company row yet — added as untracked. */
@@ -73,7 +82,22 @@ export function planLedgerImport(
   const trades: PlannedTrade[] = []
   const cash: PlannedCash[] = []
 
+  // The broker works out commission to fractions of a paisa and keeps its
+  // running balance unrounded, but prints each line rounded — so the printed
+  // debit and credit can each be a paisa off, and over a year of trades the
+  // error builds up. The change in the printed balance is the broker's own
+  // figure for what the line did to the cash; taking it (within a paisa of
+  // the printed columns, which the parser has checked) makes the history
+  // reproduce the broker's cash exactly.
+  let previous = ledger.openingBalance
+  const round2 = (v: number) => Math.round(v * 100) / 100
+
   for (const e of ledger.entries) {
+    const effect = round2(e.balance - previous)
+    previous = e.balance
+    const printed = round2(e.credit - e.debit)
+    const cashEffect = Math.abs(effect - printed) <= 0.011 ? effect : printed
+
     if (e.kind === 'buy' || e.kind === 'sell') {
       // A trade that does not add up cannot be left out — the history would
       // be quietly wrong from that day on — so it stops the import.
@@ -87,20 +111,48 @@ export function planLedgerImport(
         symbol: e.symbol!,
         quantity: e.quantity!,
         pricePerShare: e.amount! / e.quantity!,
-        commission: e.commission,
+        commission: round2(e.kind === 'buy' ? -cashEffect - e.amount! : e.amount! - cashEffect),
       })
     } else if (e.kind === 'other') {
       skipped.push(`${e.date} ${e.label} ${e.description} (${e.credit ? `+${e.credit}` : `−${e.debit}`}) — not recognised`)
     } else {
       const issues = e.issues.filter((i) => !i.startsWith('unrecognised'))
       if (issues.length > 0) blockers.push(`${e.date} ${e.description}: ${issues.join('; ')}`)
-      cash.push({ date: e.date, kind: e.kind, amount: e.credit - e.debit, description: e.description })
+      cash.push({ date: e.date, kind: e.kind, amount: cashEffect, description: e.description })
     }
   }
 
+  // Which existing buys and sells in the period the ledger replaces.
   const inPeriod = (t: Existing) => t.tradeDate >= ledger.from && t.tradeDate <= ledger.to
-  const replaced = existing.filter((t) => (t.txnType === 'buy' || t.txnType === 'sell') && inPeriod(t))
-  const kept = existing.filter((t) => !replaced.includes(t))
+  const candidates = existing.filter((t) => (t.txnType === 'buy' || t.txnType === 'sell') && inPeriod(t))
+  const unclaimed = [...trades]
+  const replaced: LedgerPlan['replaced'] = []
+  const keptManual: Existing[] = []
+
+  for (const t of candidates) {
+    if (t.source && t.source !== 'manual') {
+      replaced.push({ ...t, reason: `from an earlier ${t.source === 'ledger' ? 'ledger' : 'statement'} import` })
+      continue
+    }
+    // Typed in by hand: replaced only by the ledger trade it duplicates —
+    // same stock, side and shares, within a few days (a hand-entered date is
+    // easily the order date rather than the trade date).
+    const match = unclaimed.findIndex(
+      (l) =>
+        l.symbol === t.symbol &&
+        l.txnType === t.txnType &&
+        l.quantity === t.quantity &&
+        Math.abs(Date.parse(l.date) - Date.parse(t.tradeDate)) <= 3 * 86_400_000,
+    )
+    if (match >= 0) {
+      replaced.push({ ...t, reason: `entered by hand; the ledger has it on ${unclaimed[match].date}` })
+      unclaimed.splice(match, 1)
+    } else {
+      keptManual.push(t)
+    }
+  }
+
+  const kept = existing.filter((t) => !replaced.some((r) => r === t || (r.id !== undefined && r.id === t.id)))
 
   const accountId = existing[0]?.accountId ?? 0
   const after: PortfolioTransaction[] = [
@@ -134,6 +186,7 @@ export function planLedgerImport(
     trades,
     cash,
     replaced,
+    keptManual,
     holdings: symbols
       .map((symbol) => ({ symbol, before: before.get(symbol) ?? 0, after: afterQty.get(symbol) ?? 0 }))
       .filter((h) => h.before !== 0 || h.after !== 0 || trades.some((t) => t.symbol === h.symbol)),

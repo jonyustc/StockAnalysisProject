@@ -117,6 +117,20 @@ describe('alreadyRecorded', () => {
     assert.equal(alreadyRecorded(ledger, 1, 'MARICO', 400, '2026-08-27'), false)
     assert.equal(alreadyRecorded(ledger, 1, 'MARICO', 500, '2026-09-15'), false)
   })
+
+  it('tells two equal interims apart by record date', () => {
+    // A later interim of the same amount is already recorded; the earlier
+    // one is not, even though that payment falls after its record date.
+    const later = [txn({ tradeDate: '2026-12-10', recordDate: '2026-11-20' })]
+    assert.equal(alreadyRecorded(later, 1, 'MARICO', 500, '2026-06-01'), false)
+    assert.equal(alreadyRecorded(later, 1, 'MARICO', 500, '2026-11-20'), true)
+  })
+
+  it('without a stored record date, only a payment soon after counts', () => {
+    const undated = [txn({ tradeDate: '2026-12-10' })]
+    assert.equal(alreadyRecorded(undated, 1, 'MARICO', 500, '2026-11-20'), true)
+    assert.equal(alreadyRecorded(undated, 1, 'MARICO', 500, '2026-06-01'), false)
+  })
 })
 
 describe('incomeByYear', () => {

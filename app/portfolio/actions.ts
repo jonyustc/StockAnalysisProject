@@ -83,6 +83,14 @@ export async function addTransaction(
     return { ok: false, message: 'The tax withheld cannot be more than the dividend.' }
   }
 
+  // A dividend's record date, when known, is what tells it apart from another
+  // of the same amount. It cannot be after the day it was paid.
+  const recordDateRaw = String(formData.get('recordDate') ?? '').trim()
+  const recordDate = txnType === 'dividend' && /^\d{4}-\d{2}-\d{2}$/.test(recordDateRaw) ? recordDateRaw : null
+  if (recordDate && recordDate > tradeDate) {
+    return { ok: false, message: 'The payment date cannot be before the record date.' }
+  }
+
   await db.insert(portfolioTransactions).values({
     companyId: company.id,
     boAccountId: account.id,
@@ -95,6 +103,8 @@ export async function addTransaction(
     grossAmount: txnType === 'dividend' ? String(grossAmount) : null,
     commission: String(commission),
     taxWithheld: String(taxWithheld),
+    source: 'manual',
+    recordDate,
     notes: String(formData.get('notes') ?? '').trim() || null,
   })
 

@@ -23,6 +23,10 @@ export interface PortfolioTransaction {
   grossAmount: number | null
   commission: number
   taxWithheld: number
+  /** Where the row came from; decides what an import may replace. */
+  source?: 'manual' | 'statement' | 'ledger' | 'dividend_report' | string
+  /** A dividend's record date. */
+  recordDate?: string | null
 }
 
 export interface Holding {

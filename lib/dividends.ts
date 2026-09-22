@@ -153,26 +153,38 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+/** Cash dividends are paid within weeks of the record date; allow a season. */
+const PAYMENT_WINDOW_DAYS = 120
+
 /**
- * Whether the ledger already has this dividend: same account and stock, the
- * same gross amount, dated on or after the record date. Stops a dividend
- * recorded by hand being offered again by the next import, and the reverse.
+ * Whether the ledger already has this dividend. Stops a dividend recorded by
+ * hand being offered again by the next import, and the reverse.
+ *
+ * The record date identifies a dividend: a company can pay two equal
+ * interims, so the amount alone does not. When both sides know it, it must
+ * match. A row recorded without one is matched by amount, paid within a
+ * season after the record date — not merely "any time after", which would
+ * let an earlier interim's payment hide a later, equal one.
  */
 export function alreadyRecorded(
-  transactions: Pick<PortfolioTransaction, 'accountId' | 'symbol' | 'txnType' | 'grossAmount' | 'tradeDate'>[],
+  transactions: Pick<PortfolioTransaction, 'accountId' | 'symbol' | 'txnType' | 'grossAmount' | 'tradeDate' | 'recordDate'>[],
   accountId: number,
   symbol: string,
   gross: number,
   recordDate: string | null,
 ): boolean {
-  return transactions.some(
-    (t) =>
-      t.txnType === 'dividend' &&
-      t.accountId === accountId &&
-      t.symbol === symbol &&
-      Math.abs((t.grossAmount ?? 0) - gross) < 0.01 &&
-      (recordDate === null || t.tradeDate >= recordDate),
-  )
+  const latest = recordDate ? addDays(recordDate, PAYMENT_WINDOW_DAYS) : null
+
+  return transactions.some((t) => {
+    if (t.txnType !== 'dividend' || t.accountId !== accountId || t.symbol !== symbol) return false
+    if (recordDate && t.recordDate) return t.recordDate === recordDate
+    if (Math.abs((t.grossAmount ?? 0) - gross) >= 0.01) return false
+    return recordDate === null || (t.tradeDate >= recordDate && t.tradeDate <= latest!)
+  })
+}
+
+function addDays(date: string, days: number): string {
+  return new Date(Date.parse(date) + days * 86_400_000).toISOString().slice(0, 10)
 }
 
 export interface YearIncome {

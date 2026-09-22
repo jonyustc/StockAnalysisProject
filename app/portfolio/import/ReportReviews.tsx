@@ -57,6 +57,8 @@ export function LedgerReview({ preview }: { preview: LedgerPreview }) {
       <input type="hidden" name="to" value={plan.to} />
       <input type="hidden" name="broker" value={h.broker} />
       <input type="hidden" name="plan" value={JSON.stringify(plan)} />
+      <input type="hidden" name="openingBalance" value={h.openingBalance} />
+      <input type="hidden" name="closingBalance" value={h.closingBalance} />
 
       <Facts
         items={[
@@ -90,16 +92,20 @@ export function LedgerReview({ preview }: { preview: LedgerPreview }) {
         <ul className="mt-2 space-y-1 text-xs text-neutral-400">
           <li>
             <strong className="text-neutral-200">{plan.trades.length}</strong> trades recorded with their real dates, prices
-            and commission
-            {plan.replaced.length > 0 ? (
-              <>
-                , replacing{' '}
-                {plan.replaced.map((r) => `${r.symbol} ${r.txnType} ${r.quantity ?? ''} on ${r.tradeDate}`).join('; ')} — the
-                ledger is the full record for {plan.from} to {plan.to}
-              </>
-            ) : null}
-            .
+            and commission — the ledger is the full record of trades for {plan.from} to {plan.to}.
           </li>
+          {plan.replaced.length > 0 ? (
+            <li>
+              Replaced, since the ledger now has the real trades:
+              <ul className="mt-1 space-y-0.5 pl-4">
+                {plan.replaced.map((r) => (
+                  <li key={r.id}>
+                    {r.symbol} {r.txnType} {r.quantity ?? ''} on {r.tradeDate} <span className="text-neutral-600">— {r.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ) : null}
           <li>
             <strong className="text-neutral-200">{plan.cash.length}</strong> cash movements — deposits, fees and dividends
             received — with their dates.
@@ -146,11 +152,43 @@ export function LedgerReview({ preview }: { preview: LedgerPreview }) {
         </table>
       </div>
 
+      {plan.keptManual.length > 0 ? (
+        <section className="rounded border border-amber-900/60 bg-amber-950/20 p-4 text-sm">
+          <p className="text-amber-200/90">Entered by hand, and not in this ledger — kept</p>
+          <p className="mt-0.5 text-xs text-neutral-500">
+            A cash ledger does not list shares that arrived without a trade — an IPO allotment, a
+            transfer in — so these are kept. Tick one only if it duplicates a trade in the ledger
+            with a different date or quantity.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs">
+            {plan.keptManual.map((r) => (
+              <li key={r.id}>
+                <label className="flex items-center gap-2 text-neutral-300">
+                  <input type="checkbox" name="removeManual" value={r.id} className="rounded border-neutral-700 bg-neutral-950" />
+                  Remove {r.symbol} {r.txnType} {r.quantity ?? ''}
+                  {r.pricePerShare ? ` @ ৳${r.pricePerShare.toFixed(2)}` : ''} on {r.tradeDate}
+                </label>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {changed.length > 0 ? (
+        <label className="flex items-start gap-2 rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/90">
+          <input type="checkbox" name="confirmHoldings" value="1" className="mt-0.5 rounded border-neutral-700 bg-neutral-950" />
+          <span>
+            I have checked that the new share counts ({changed.map((x) => `${x.symbol} ${x.before}→${x.after}`).join(', ')}) are
+            right — for example against today&apos;s broker statement. Without this tick, nothing is imported.
+          </span>
+        </label>
+      ) : null}
+
       <Outcome
         result={result}
         pending={pending}
         disabled={blocked}
-        label={changed.length > 0 ? 'Import anyway' : 'Import the history'}
+        label={changed.length > 0 ? 'Import, holdings change' : 'Import the history'}
       />
     </form>
   )

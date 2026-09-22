@@ -26,6 +26,14 @@ import {
 
 import type { StoredReceivable } from '@/lib/dividends'
 
+/** One holding as a broker statement printed it. */
+export interface SnapshotHolding {
+  symbol: string
+  quantity: number
+  /** The broker's exact total cost. */
+  costAmount: number
+}
+
 /* -------------------------------------------------------------------------- */
 /* Enums                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -710,6 +718,11 @@ export const portfolioTransactions = pgTable(
     commission: numeric('commission', { precision: 18, scale: 4 }).notNull().default('0'),
     taxWithheld: numeric('tax_withheld', { precision: 18, scale: 4 }).notNull().default('0'),
 
+    /** manual | statement | ledger | dividend_report — decides what an import may replace. */
+    source: text('source').notNull().default('manual'),
+    /** A dividend's record date: what tells two equal dividends apart. */
+    recordDate: date('record_date'),
+
     corporateActionId: bigint('corporate_action_id', { mode: 'number' }).references(
       () => corporateActions.id,
       { onDelete: 'set null' },
@@ -772,6 +785,8 @@ export const accountSnapshots = pgTable(
 
     /** Cash dividends declared but not yet paid, as printed on the statement. */
     dividendsReceivable: jsonb('dividends_receivable').$type<StoredReceivable[]>().notNull().default([]),
+    /** Each holding as the statement printed it. */
+    holdings: jsonb('holdings').$type<SnapshotHolding[]>().notNull().default([]),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -814,4 +829,27 @@ export const cashMovements = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('cash_movements_account_idx').on(t.boAccountId, t.movementDate)],
+)
+
+/* -------------------------------------------------------------------------- */
+/* ledger_imports                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** The periods an account's broker ledger has covered. */
+export const ledgerImports = pgTable(
+  'ledger_imports',
+  {
+    id: bigint('id', { mode: 'number' }).generatedAlwaysAsIdentity().primaryKey(),
+    boAccountId: smallint('bo_account_id')
+      .notNull()
+      .references(() => boAccounts.id, { onDelete: 'cascade' }),
+    periodFrom: date('period_from').notNull(),
+    periodTo: date('period_to').notNull(),
+    openingBalance: numeric('opening_balance', { precision: 20, scale: 2 }).notNull(),
+    closingBalance: numeric('closing_balance', { precision: 20, scale: 2 }).notNull(),
+    trades: integer('trades').notNull(),
+    cashLines: integer('cash_lines').notNull(),
+    importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('ledger_imports_account_idx').on(t.boAccountId, t.periodTo)],
 )

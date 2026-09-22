@@ -14,6 +14,7 @@ import {
   financialFacts,
   fiscalPeriods,
   jobRuns,
+  ledgerImports,
   lineItemDefs,
   portfolioTransactions,
   sectors,
@@ -363,6 +364,8 @@ export async function listPortfolioTransactions() {
       commission: portfolioTransactions.commission,
       taxWithheld: portfolioTransactions.taxWithheld,
       notes: portfolioTransactions.notes,
+      source: portfolioTransactions.source,
+      recordDate: portfolioTransactions.recordDate,
     })
     .from(portfolioTransactions)
     .innerJoin(companies, eq(companies.id, portfolioTransactions.companyId))
@@ -424,6 +427,7 @@ export async function listAccountSnapshots() {
       ipoPayment: accountSnapshots.ipoPayment,
       ipoRefund: accountSnapshots.ipoRefund,
       dividendsReceivable: accountSnapshots.dividendsReceivable,
+      holdings: accountSnapshots.holdings,
     })
     .from(accountSnapshots)
     .innerJoin(boAccounts, eq(boAccounts.id, accountSnapshots.boAccountId))
@@ -447,6 +451,7 @@ export async function listAccountSnapshots() {
     ipoPayment: Number(row.ipoPayment),
     ipoRefund: Number(row.ipoRefund),
     dividendsReceivable: row.dividendsReceivable,
+    holdings: row.holdings,
   }))
 }
 
@@ -474,4 +479,20 @@ export async function listCashMovements() {
     .orderBy(asc(cashMovements.movementDate), asc(cashMovements.id))
 
   return rows.map((row) => ({ ...row, amount: Number(row.amount) }))
+}
+
+/** Every broker ledger imported, oldest period first. */
+export async function listLedgerImports() {
+  const rows = await db
+    .select()
+    .from(ledgerImports)
+    .orderBy(asc(ledgerImports.periodFrom), asc(ledgerImports.id))
+  return rows.map((row) => ({
+    accountId: row.boAccountId,
+    from: row.periodFrom,
+    to: row.periodTo,
+    openingBalance: Number(row.openingBalance),
+    closingBalance: Number(row.closingBalance),
+    importedAt: row.importedAt,
+  }))
 }

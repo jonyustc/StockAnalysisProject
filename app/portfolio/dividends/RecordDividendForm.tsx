@@ -35,6 +35,7 @@ export function RecordDividendForm({
       <input type="hidden" name="symbol" value={symbol} />
       <input type="hidden" name="txnType" value="dividend" />
       <input type="hidden" name="grossAmount" value={gross} />
+      {recordDate ? <input type="hidden" name="recordDate" value={recordDate} /> : null}
       <input
         type="hidden"
         name="notes"

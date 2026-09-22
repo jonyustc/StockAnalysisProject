@@ -110,6 +110,7 @@ describe('planLedgerImport', () => {
     grossAmount: null,
     commission: 0,
     taxWithheld: 0,
+    source: 'statement',
   }
 
   it('replaces a statement opening position with the real trades', () => {
@@ -123,6 +124,39 @@ describe('planLedgerImport', () => {
       plan.cash.map((c) => [c.kind, c.amount]),
       [['deposit', 10000], ['fee', -150], ['dividend', 45]],
     )
+  })
+
+  it('replaces a hand-entered trade the ledger also has', () => {
+    const typed = { ...opening, id: 11, source: 'manual', tradeDate: '2026-01-03', quantity: 10 }
+    const plan = planLedgerImport(parsed.ledger, [typed], new Set(['AAAPHARMA']))
+    assert.deepEqual(plan.replaced.map((t) => t.id), [11])
+    assert.deepEqual(plan.keptManual, [])
+    assert.equal(plan.holdings[0].after, 6)
+  })
+
+  it('keeps a hand-entered row the ledger does not have — an IPO allotment, say', () => {
+    const ipo = { ...opening, id: 12, source: 'manual', tradeDate: '2026-01-15', quantity: 25, pricePerShare: 10 }
+    const plan = planLedgerImport(parsed.ledger, [ipo], new Set(['AAAPHARMA']))
+    assert.deepEqual(plan.replaced, [])
+    assert.deepEqual(plan.keptManual.map((t) => t.id), [12])
+    assert.equal(plan.holdings[0].after, 31)
+  })
+
+  it('takes cash from the broker’s running balance, not the rounded columns', () => {
+    // Commission printed 4.00, but the balance moved by 1,004.51: the broker's
+    // unrounded commission was 4.005.
+    const items = ledger().map((i) => (i.str === '8,995.50' ? { ...i, str: '8,995.49' } : i))
+      .map((i) => (i.str === '9,473.58' ? { ...i, str: '9,473.57' } : i))
+      .map((i) => (i.str === '9,323.58' ? { ...i, str: '9,323.57' } : i))
+      .map((i) => (i.str === '9,368.58' ? { ...i, str: '9,368.57' } : i))
+      .map((i) => (i.str === 'Closing Balance (TK.): 9,368.58' ? { ...i, str: 'Closing Balance (TK.): 9,368.57' } : i))
+    const drifted = parseLankaBanglaLedger(items)
+    assert.ok(drifted.ok)
+    const plan = planLedgerImport(drifted.ledger, [], new Set())
+    assert.equal(plan.trades[0].commission, 4.01)
+    const cash = plan.cash.reduce((s, c) => s + c.amount, 0)
+    const trades = plan.trades.reduce((s, t) => s + (t.txnType === 'buy' ? -1 : 1) * t.quantity * t.pricePerShare - t.commission, 0)
+    assert.ok(Math.abs(cash + trades - 9368.57) < 0.005)
   })
 
   it('lists companies it will have to add', () => {

@@ -79,12 +79,13 @@ export function AccountFilter({
 }
 
 /** The portfolio section tabs. */
-export function PortfolioNav({ current }: { current: 'holdings' | 'trading' | 'dividends' | 'cash' }) {
+export function PortfolioNav({ current }: { current: 'holdings' | 'trading' | 'dividends' | 'cash' | 'checks' }) {
   const tabs = [
     { key: 'holdings', href: '/portfolio', label: 'Holdings' },
     { key: 'trading', href: '/portfolio/trading', label: 'Trading' },
     { key: 'dividends', href: '/portfolio/dividends', label: 'Dividends' },
     { key: 'cash', href: '/portfolio/cash', label: 'Cash & withdrawals' },
+    { key: 'checks', href: '/portfolio/checks', label: 'Checks' },
   ] as const
   return (
     <nav className="flex gap-1 border-b border-neutral-800 text-sm">
