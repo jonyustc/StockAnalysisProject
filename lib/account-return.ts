@@ -163,6 +163,58 @@ export function yearlyReturns(snapshots: AccountSnapshot[]): YearReturn[] {
     }))
 }
 
+export interface CashMovement {
+  from: string
+  to: string
+  deposited: number
+  withdrawn: number
+  /** Net of tax, as credited. */
+  dividends: number
+  transferredIn: number
+  transferredOut: number
+  /** IPO refunds less IPO payments: negative while an application is pending. */
+  ipoNet: number
+}
+
+/**
+ * Money that moved between consecutive snapshots, read from the change in the
+ * broker's lifetime totals. Periods where nothing moved are left out.
+ *
+ * Statements say how much moved between two dates, not on which day — import
+ * daily and each row is one day.
+ */
+export function cashMovements(
+  snapshots: (AccountSnapshot & { ipoPayment?: number; ipoRefund?: number })[],
+): CashMovement[] {
+  const ordered = [...snapshots].sort((a, b) => (a.asOf < b.asOf ? -1 : 1))
+  const movements: CashMovement[] = []
+
+  for (let i = 1; i < ordered.length; i += 1) {
+    const a = ordered[i - 1]
+    const b = ordered[i]
+    const d = (pick: (s: typeof a) => number | undefined) => round2((pick(b) ?? 0) - (pick(a) ?? 0))
+
+    const amounts = {
+      deposited: d((s) => s.deposit),
+      withdrawn: d((s) => s.withdraw),
+      dividends: d((s) => s.cashDividend),
+      transferredIn: d((s) => s.shareTransferIn),
+      transferredOut: d((s) => s.shareTransferOut),
+      ipoNet: d((s) => (s.ipoRefund ?? 0) - (s.ipoPayment ?? 0)),
+    }
+
+    if (Object.values(amounts).some((v) => Math.abs(v) >= 0.005)) {
+      movements.push({ from: a.asOf, to: b.asOf, ...amounts })
+    }
+  }
+
+  return movements.reverse()
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
 /** Chained return across every snapshot — since tracking began. */
 export function sinceFirstSnapshot(snapshots: AccountSnapshot[]): {
   return: number | null

@@ -12,10 +12,12 @@ import {
   yearlyReturns,
   type AccountSnapshot,
 } from '@/lib/account-return'
-import { buildPortfolio, MIN_DAYS_TO_ANNUALISE } from '@/lib/portfolio'
+import { buildPortfolio, freeSharePlan, MIN_DAYS_TO_ANNUALISE } from '@/lib/portfolio'
 import { PRICE_SOURCE_NAME } from '@/lib/prices'
 import { assessFreshness, formatTradeDate, type Freshness } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
+
+import { AccountFilter, PortfolioNav, Stat } from './ui'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +56,24 @@ export default async function PortfolioPage({
   const closed = portfolio.holdings.filter((h) => h.quantity === 0)
   const warnings = portfolio.holdings.flatMap((h) => h.warnings)
 
+  // Cash is not in the ledger — it comes from each account's latest statement.
+  const scopedSnapshots = selected
+    ? allSnapshots.filter((s) => s.accountId === selected.id)
+    : allSnapshots
+  const latestSnapshot = new Map<number, (typeof allSnapshots)[number]>()
+  for (const s of scopedSnapshots) latestSnapshot.set(s.accountId, s)
+  const cash = [...latestSnapshot.values()].reduce((sum, s) => sum + s.cashBalance, 0)
+  const cashAsOf = [...latestSnapshot.values()].map((s) => s.asOf).sort()[0] ?? null
+
+  // Sector weights, by market value.
+  const sectorOf = new Map(transactions.map((t) => [t.symbol, t.sector ?? 'Unclassified']))
+  const bySector = new Map<string, number>()
+  for (const h of open) {
+    const sector = sectorOf.get(h.symbol) ?? 'Unclassified'
+    bySector.set(sector, (bySector.get(sector) ?? 0) + (h.marketValue ?? 0))
+  }
+  const sectors = [...bySector.entries()].sort((a, b) => b[1] - a[1])
+
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -81,6 +101,8 @@ export default async function PortfolioPage({
         </div>
       </header>
 
+      <PortfolioNav current="holdings" />
+
       {transactions.length === 0 ? (
         <p className="rounded border border-neutral-800 bg-neutral-900/40 p-6 text-sm text-neutral-400">
           Nothing recorded yet.{' '}
@@ -91,23 +113,7 @@ export default async function PortfolioPage({
         </p>
       ) : (
         <>
-          {accounts.length > 1 ? (
-            <nav className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="text-neutral-600">Account:</span>
-              <FilterLink href="/portfolio" active={!selected}>
-                All
-              </FilterLink>
-              {accounts.map((account) => (
-                <FilterLink
-                  key={account.id}
-                  href={`/portfolio?account=${account.id}`}
-                  active={selected?.id === account.id}
-                >
-                  {account.name}
-                </FilterLink>
-              ))}
-            </nav>
-          ) : null}
+          <AccountFilter basePath="/portfolio" accounts={accounts} selectedId={selected?.id ?? null} />
 
           {warnings.length > 0 ? (
             <div className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
@@ -117,9 +123,19 @@ export default async function PortfolioPage({
             </div>
           ) : null}
 
-          <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Cost" value={formatBDT(portfolio.totalCost)} sub="of what you still hold" />
+          <section className="grid grid-cols-2 gap-px overflow-hidden rounded border border-neutral-800 bg-neutral-800 sm:grid-cols-4">
+            <Stat
+              label="Total worth"
+              value={formatBDT(portfolio.totalMarketValue + cash)}
+              sub="holdings plus cash"
+            />
             <Stat label="Market value" value={formatBDT(portfolio.totalMarketValue)} />
+            <Stat
+              label="Cash available"
+              value={cashAsOf ? formatBDT(cash) : '—'}
+              sub={cashAsOf ? `per statement of ${formatTradeDate(cashAsOf)}` : 'import a statement'}
+            />
+            <Stat label="Cost" value={formatBDT(portfolio.totalCost)} sub="of what you still hold" />
             <Stat
               label="Unrealised"
               value={formatBDT(portfolio.totalUnrealised)}
@@ -169,7 +185,28 @@ export default async function PortfolioPage({
             emptyText="No open positions in this account."
             priceDates={priceDates}
             newestPrice={newestPrice}
+            prices={prices}
           />
+
+          {sectors.length > 1 ? (
+            <section>
+              <h2 className="mb-2 text-sm font-medium text-neutral-300">By sector</h2>
+              <div className="space-y-1.5 rounded border border-neutral-800 bg-neutral-900/40 p-4">
+                {sectors.map(([sector, value]) => {
+                  const share = portfolio.totalMarketValue > 0 ? value / portfolio.totalMarketValue : 0
+                  return (
+                    <div key={sector} className="grid grid-cols-[10rem_1fr_4rem] items-center gap-3 text-xs">
+                      <span className="truncate text-neutral-400">{sector}</span>
+                      <span className="h-2 overflow-hidden rounded bg-neutral-800">
+                        <span className="block h-full bg-sky-600" style={{ width: `${share * 100}%` }} />
+                      </span>
+                      <span className="text-right tabular-nums text-neutral-300">{formatPercent(share, 1)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
 
           <AccountReturns
             snapshots={
@@ -261,6 +298,7 @@ function Table({
   closed = false,
   priceDates,
   newestPrice = null,
+  prices,
 }: {
   title: string
   rows: ReturnType<typeof buildPortfolio>['holdings']
@@ -269,6 +307,7 @@ function Table({
   closed?: boolean
   priceDates?: Map<string, string>
   newestPrice?: string | null
+  prices?: Map<string, number>
 }) {
   if (rows.length === 0) {
     return emptyText ? <p className="text-sm text-neutral-500">{emptyText}</p> : null
@@ -284,6 +323,14 @@ function Table({
               <th className="px-3 py-2 text-left font-medium">Symbol</th>
               <th className="px-3 py-2 text-right font-medium">Qty</th>
               <th className="px-3 py-2 text-right font-medium">Avg cost</th>
+              {!closed ? (
+                <th
+                  className="px-3 py-2 text-right font-medium"
+                  title="Everything paid in, less sale proceeds and dividends, over the shares still held"
+                >
+                  Net cost
+                </th>
+              ) : null}
               <th className="px-3 py-2 text-right font-medium">Cost</th>
               {!closed ? (
                 <>
@@ -324,6 +371,11 @@ function Table({
                 <td className="px-3 py-2 text-right tabular-nums text-neutral-300">
                   {holding.averageCost === null ? '—' : `৳${holding.averageCost.toFixed(2)}`}
                 </td>
+                {!closed ? (
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    <NetCost holding={holding} price={prices?.get(holding.symbol) ?? null} />
+                  </td>
+                ) : null}
                 <td className="px-3 py-2 text-right tabular-nums text-neutral-300">
                   {formatBDT(holding.costBasis)}
                 </td>
@@ -616,48 +668,47 @@ function PriceFreshness({
   )
 }
 
-function FilterLink({
-  href,
-  active,
-  children,
+/**
+ * Net cost per share: the figure that falls with every profitable sale and
+ * every dividend. Zero or below means the shares still held cost nothing.
+ */
+function NetCost({
+  holding,
+  price,
 }: {
-  href: string
-  active: boolean
-  children: React.ReactNode
+  holding: ReturnType<typeof buildPortfolio>['holdings'][number]
+  price: number | null
 }) {
+  const net = holding.netCostPerShare
+  if (net === null) return <span className="text-neutral-600">—</span>
+
+  const avg = holding.averageCost
+  const below = avg !== null && avg > 0 ? 1 - net / avg : null
+  const plan = freeSharePlan(holding, price)
+
   return (
     <Link
-      href={href}
-      className={`rounded-full border px-2.5 py-0.5 ${
-        active
-          ? 'border-sky-700 text-sky-300'
-          : 'border-neutral-700 text-neutral-400 hover:border-neutral-600 hover:text-neutral-200'
-      }`}
+      href={`/portfolio/stock/${holding.symbol}`}
+      className="group block"
+      title="How this moved, trade by trade"
     >
-      {children}
+      {net <= 0 ? (
+        <span className="font-medium text-emerald-400">Free</span>
+      ) : (
+        <span className="text-neutral-200 group-hover:text-sky-300">৳{net.toFixed(2)}</span>
+      )}
+      {net <= 0 ? (
+        <span className="block text-xs text-emerald-500/80">
+          {formatBDT(-holding.netCost)} taken out beyond cost
+        </span>
+      ) : below !== null && below >= 0.0005 ? (
+        <span className="block text-xs text-emerald-500/80">{formatPercent(below, 1)} below avg</span>
+      ) : null}
+      {plan ? (
+        <span className="block text-xs text-neutral-500">
+          sell {plan.sell.toLocaleString()} → {plan.keep.toLocaleString()} free
+        </span>
+      ) : null}
     </Link>
-  )
-}
-
-function Stat({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string
-  value: string
-  sub?: string
-  tone?: 'good' | 'bad'
-}) {
-  const colour =
-    tone === 'good' ? 'text-emerald-500' : tone === 'bad' ? 'text-red-400' : 'text-neutral-100'
-
-  return (
-    <div className="bg-neutral-950 px-4 py-3">
-      <p className="text-xs text-neutral-500">{label}</p>
-      <p className={`mt-0.5 text-lg font-medium ${colour}`}>{value}</p>
-      {sub ? <p className="text-xs text-neutral-600">{sub}</p> : null}
-    </div>
   )
 }

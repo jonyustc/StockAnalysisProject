@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  cashMovements,
   lifetimeReturn,
   netContributions,
   periodReturn,
@@ -139,6 +140,30 @@ describe('yearlyReturns', () => {
 
   it('needs two snapshots to say anything', () => {
     assert.deepEqual(yearlyReturns([series[0]]), [])
+  })
+})
+
+describe('cashMovements', () => {
+  it('reads deposits, withdrawals and dividends from the change in totals', () => {
+    const moves = cashMovements([
+      snap({ asOf: '2026-01-01', deposit: 1000, withdraw: 0, cashDividend: 0 }),
+      snap({ asOf: '2026-01-02', deposit: 1000, withdraw: 0, cashDividend: 0 }),
+      snap({ asOf: '2026-01-03', deposit: 1500, withdraw: 200, cashDividend: 45 }),
+    ])
+    // The quiet day is left out; newest first.
+    assert.equal(moves.length, 1)
+    assert.deepEqual(
+      [moves[0].from, moves[0].to, moves[0].deposited, moves[0].withdrawn, moves[0].dividends],
+      ['2026-01-02', '2026-01-03', 500, 200, 45],
+    )
+  })
+
+  it('nets IPO money moving out and back', () => {
+    const [move] = cashMovements([
+      { ...snap({ asOf: '2026-01-01' }), ipoPayment: 0, ipoRefund: 0 },
+      { ...snap({ asOf: '2026-01-05' }), ipoPayment: 5000, ipoRefund: 4000 },
+    ])
+    assert.equal(move.ipoNet, -1000)
   })
 })
 

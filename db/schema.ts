@@ -14,6 +14,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -22,6 +23,8 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
+
+import type { StoredReceivable } from '@/lib/dividends'
 
 /* -------------------------------------------------------------------------- */
 /* Enums                                                                       */
@@ -766,6 +769,9 @@ export const accountSnapshots = pgTable(
     ipoPayment: numeric('ipo_payment', { precision: 20, scale: 2 }).notNull().default('0'),
     shareTransferOut: numeric('share_transfer_out', { precision: 20, scale: 2 }).notNull().default('0'),
     realisedGain: numeric('realised_gain', { precision: 20, scale: 2 }).notNull().default('0'),
+
+    /** Cash dividends declared but not yet paid, as printed on the statement. */
+    dividendsReceivable: jsonb('dividends_receivable').$type<StoredReceivable[]>().notNull().default([]),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

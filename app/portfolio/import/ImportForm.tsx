@@ -46,6 +46,8 @@ export function ImportForm() {
   }))
 
   const holdingIssues = s?.holdings.filter((h) => h.issues.length > 0) ?? []
+  const dividends = preview?.dividends ?? []
+  const recordableDividends = dividends.filter((d) => d.symbol && !d.recorded)
 
   return (
     <div className="space-y-6">
@@ -228,26 +230,81 @@ export function ImportForm() {
             </table>
           </div>
 
+          <input type="hidden" name="dividends" value={JSON.stringify(dividends)} />
+          {dividends.length > 0 ? (
+            <section className="rounded border border-emerald-900/60 bg-emerald-950/20 p-4 text-sm">
+              <p className="text-neutral-200">
+                Dividends paid since the {preview.previousAsOf} statement
+              </p>
+              <p className="mt-0.5 text-xs text-neutral-500">
+                Declared on that statement, gone from this one, and the account&apos;s dividend total
+                rose to match. The tax is inferred from how much actually arrived.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {dividends.map((d) => (
+                  <li key={d.key} className="flex items-start gap-3">
+                    {d.symbol && !d.recorded ? (
+                      <input
+                        type="checkbox"
+                        name="dividend"
+                        value={d.key}
+                        defaultChecked={!d.caveat}
+                        aria-label={`Record ${d.companyName} dividend`}
+                        className="mt-1 rounded border-neutral-700 bg-neutral-950"
+                      />
+                    ) : (
+                      <span className="mt-1 w-3.25" />
+                    )}
+                    <div className="text-xs">
+                      <p className="text-neutral-300">
+                        <strong className="font-medium text-neutral-100">{d.symbol ?? d.companyName}</strong>{' '}
+                        {taka(d.gross)} gross · {taka(d.taxWithheld)} tax ·{' '}
+                        {taka(d.gross - d.taxWithheld)} received
+                        <span className="text-neutral-500"> · record date {d.recordDate ?? '?'}</span>
+                      </p>
+                      {d.recorded ? <p className="text-emerald-500/80">Already in the ledger.</p> : null}
+                      {!d.symbol ? (
+                        <p className="text-amber-400/80">No tracked company matches this name, so it cannot be recorded.</p>
+                      ) : null}
+                      {d.caveat ? <p className="text-amber-400/80">{d.caveat}</p> : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {(preview.unexplainedDividendCash ?? 0) >= 0.01 ? (
+            <p className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
+              {taka(preview.unexplainedDividendCash)} of dividends arrived since the{' '}
+              {preview.previousAsOf} statement that no declared dividend explains — declared and paid
+              between two imports. Record it on the transactions page so it counts towards the stock.
+            </p>
+          ) : null}
+
           {s.dividendsReceivable.length > 0 ? (
             <p className="rounded border border-neutral-800 bg-neutral-900/40 px-4 py-2.5 text-xs text-neutral-400">
               Declared but not yet paid:{' '}
               {s.dividendsReceivable
                 .map((d) => `${d.companyName} ${taka(d.entitlement)} (record date ${d.recordDate ?? '?'})`)
                 .join('; ')}
-              . Record it as a dividend on the transactions page once it lands — it is not
-              recorded now, because it has not been received.
+              . Saved with the snapshot: the dividends page lists it, and a later import offers to
+              record it once it has been paid.
             </p>
           ) : null}
 
           <div className="flex items-center gap-4 border-t border-neutral-800 pt-4">
             <button
               type="submit"
-              disabled={applying || (actionable.length === 0 && !preview.snapshot)}
+              disabled={
+                applying ||
+                (actionable.length === 0 && recordableDividends.length === 0 && !preview.snapshot)
+              }
               className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
             >
               {applying
                 ? 'Saving…'
-                : actionable.length > 0
+                : actionable.length > 0 || recordableDividends.length > 0
                   ? 'Record ticked rows and save snapshot'
                   : 'Save snapshot'}
             </button>
@@ -255,7 +312,7 @@ export function ImportForm() {
               <p className={`text-sm ${applied.ok ? 'text-emerald-500' : 'text-red-400'}`}>
                 {applied.message}
               </p>
-            ) : actionable.length === 0 ? (
+            ) : actionable.length === 0 && recordableDividends.length === 0 ? (
               <p className="text-xs text-neutral-600">
                 Holdings already agree with the ledger. Saving still records today&apos;s account
                 snapshot, which is what yearly returns are built from.

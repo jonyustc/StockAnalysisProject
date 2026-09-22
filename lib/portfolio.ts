@@ -50,6 +50,18 @@ export interface Holding {
   /** Dividends of the trailing twelve months against current cost. */
   yieldOnCost: number | null
 
+  /**
+   * Net cost: every taka paid into this stock (buys, rights, commission) less
+   * every taka it has paid back (sale proceeds after commission, dividends
+   * after tax). Unlike weighted-average cost it falls with every profitable
+   * sale and every dividend — at zero or below, the shares still held are free.
+   */
+  invested: number
+  returned: number
+  netCost: number
+  /** Net cost over shares still held. Null with nothing held. */
+  netCostPerShare: number | null
+
   firstTrade: string | null
   lastTrade: string | null
   /** Anything that did not add up, e.g. selling more than was held. */
@@ -104,6 +116,8 @@ export function buildHolding(
   let dividendsGross = 0
   let dividendsNet = 0
   let recentDividends = 0
+  let invested = 0
+  let returned = 0
   const warnings: string[] = []
 
   const twelveMonthsAgo = new Date(asOf.getTime() - 365 * DAY).toISOString().slice(0, 10)
@@ -117,6 +131,7 @@ export function buildHolding(
       case 'rights':
         quantity += qty
         costBasis += qty * price + txn.commission
+        invested += qty * price + txn.commission
         break
 
       case 'bonus':
@@ -137,6 +152,8 @@ export function buildHolding(
         const proceeds = sold * price - txn.commission
 
         realisedGain += proceeds - costRemoved
+        // Proceeds of the shares actually held; an oversell is warned about above.
+        returned += proceeds
         quantity -= sold
         costBasis -= costRemoved
 
@@ -153,6 +170,7 @@ export function buildHolding(
         dividendsGross += gross
         dividendsNet += gross - txn.taxWithheld
         if (txn.tradeDate >= twelveMonthsAgo) recentDividends += gross
+        returned += gross - txn.taxWithheld
         break
       }
     }
@@ -180,6 +198,10 @@ export function buildHolding(
       unrealisedGain === null || costBasis <= 0 ? null : unrealisedGain / costBasis,
     dividendsTtm: recentDividends,
     yieldOnCost: costBasis > 0 && recentDividends > 0 ? recentDividends / costBasis : null,
+    invested,
+    returned,
+    netCost: invested - returned,
+    netCostPerShare: quantity > 0 ? (invested - returned) / quantity : null,
     firstTrade: tradeDates[0] ?? null,
     lastTrade: tradeDates[tradeDates.length - 1] ?? null,
     warnings,
@@ -210,6 +232,8 @@ export function mergeBySymbol(positions: Holding[]): Holding[] {
     const quantity = sum((h) => h.quantity)
     const costBasis = sum((h) => h.costBasis)
     const dividendsTtm = sum((h) => h.dividendsTtm)
+    const invested = sum((h) => h.invested)
+    const returned = sum((h) => h.returned)
 
     // Market value is unknown if the price is — and the price is per symbol,
     // so either every position has one or none does.
@@ -237,6 +261,10 @@ export function mergeBySymbol(positions: Holding[]): Holding[] {
         unrealisedGain === null || costBasis <= 0 ? null : unrealisedGain / costBasis,
       dividendsTtm,
       yieldOnCost: costBasis > 0 && dividendsTtm > 0 ? dividendsTtm / costBasis : null,
+      invested,
+      returned,
+      netCost: invested - returned,
+      netCostPerShare: quantity > 0 ? (invested - returned) / quantity : null,
       firstTrade: dates((h) => h.firstTrade)[0] ?? null,
       lastTrade: dates((h) => h.lastTrade).at(-1) ?? null,
       warnings: group.flatMap((h) => h.warnings),
@@ -442,4 +470,145 @@ export function xirr(flows: CashFlow[], guess = 0.1): number | null {
   }
 
   return (low + high) / 2
+}
+
+export interface CostStep {
+  date: string
+  txnType: TransactionType
+  accountName: string | null
+  /** Shares moved; null for a dividend. */
+  quantity: number | null
+  price: number | null
+  /** Cash of the event itself: negative out, positive in. */
+  cash: number
+  /** Position after the event, summed across accounts. */
+  held: number
+  averageCost: number | null
+  netCostPerShare: number | null
+  netCost: number
+}
+
+/**
+ * How average cost and net cost moved, event by event, for one stock.
+ *
+ * Each step rebuilds every account's position from its own events up to that
+ * point, so the figures are exactly what buildHolding would have reported on
+ * that day — the same rules, not a second implementation of them.
+ */
+export function costTimeline(transactions: PortfolioTransaction[]): CostStep[] {
+  const ordered = [...transactions].sort(chronological)
+  const accounts = [...new Set(ordered.map((t) => t.accountId))]
+
+  return ordered.map((txn, i) => {
+    const upTo = ordered.slice(0, i + 1)
+    const positions = accounts.map((id) =>
+      buildHolding(txn.symbol, upTo.filter((t) => t.accountId === id), null),
+    )
+    const held = positions.reduce((s, p) => s + p.quantity, 0)
+    const cost = positions.reduce((s, p) => s + p.costBasis, 0)
+    const netCost = positions.reduce((s, p) => s + p.netCost, 0)
+
+    return {
+      date: txn.tradeDate,
+      txnType: txn.txnType,
+      accountName: txn.accountName ?? null,
+      quantity: txn.quantity,
+      price: txn.pricePerShare,
+      cash: cashFlowOf(txn),
+      held,
+      averageCost: held > 0 ? cost / held : null,
+      netCostPerShare: held > 0 ? netCost / held : null,
+      netCost,
+    }
+  })
+}
+
+export interface FreeSharePlan {
+  /** Shares to sell at the price to take out all the net cost. */
+  sell: number
+  /** Shares left over, costing nothing. */
+  keep: number
+}
+
+/**
+ * The sale that makes the rest of a position free: sell enough at `price`,
+ * after commission, to recover the whole net cost. Null when it is already
+ * free, when there is no price, or when selling everything would still not
+ * recover it.
+ *
+ * @param commissionRate  DSE brokerage is typically 0.3-0.5% of the trade.
+ */
+export function freeSharePlan(
+  holding: Pick<Holding, 'quantity' | 'netCost'>,
+  price: number | null,
+  commissionRate = 0.005,
+): FreeSharePlan | null {
+  if (price === null || price <= 0 || holding.quantity <= 0 || holding.netCost <= 0) return null
+  const sell = Math.ceil(holding.netCost / (price * (1 - commissionRate)) - 1e-9)
+  if (sell >= holding.quantity) return null
+  return { sell, keep: holding.quantity - sell }
+}
+
+export interface PlannedTrade {
+  sellQty: number
+  sellPrice: number
+  buyQty: number
+  buyPrice: number
+  /** Brokerage as a fraction of each trade, e.g. 0.005. */
+  commissionRate: number
+}
+
+export interface TradeOutcome {
+  quantity: number
+  averageCost: number | null
+  netCostPerShare: number | null
+  netCost: number
+  /** Gain on the shares sold, against average cost, after commission. */
+  realisedGain: number
+  /** Cash the plan needs: positive to pay in, negative when it frees cash. */
+  cashNeeded: number
+  /** Selling more than is held. */
+  invalid: string | null
+}
+
+/**
+ * What a sale followed by a buy-back would do to a position — the move for
+ * working net cost down: sell high, buy back lower, keep the difference.
+ * Uses the same rules as buildHolding: a sale leaves average cost alone and
+ * lowers net cost by its proceeds; a buy raises both by what it costs.
+ */
+export function simulateTrade(
+  position: Pick<Holding, 'quantity' | 'costBasis' | 'netCost'>,
+  plan: PlannedTrade,
+): TradeOutcome {
+  const { sellQty, sellPrice, buyQty, buyPrice, commissionRate } = plan
+  if (sellQty > position.quantity + 1e-9) {
+    return {
+      quantity: position.quantity,
+      averageCost: position.quantity > 0 ? position.costBasis / position.quantity : null,
+      netCostPerShare: position.quantity > 0 ? position.netCost / position.quantity : null,
+      netCost: position.netCost,
+      realisedGain: 0,
+      cashNeeded: 0,
+      invalid: `Only ${position.quantity.toLocaleString()} held.`,
+    }
+  }
+
+  const averageCost = position.quantity > 0 ? position.costBasis / position.quantity : 0
+  const proceeds = sellQty * sellPrice * (1 - commissionRate)
+  const outlay = buyQty * buyPrice * (1 + commissionRate)
+
+  const quantity = position.quantity - sellQty + buyQty
+  const costBasis = position.costBasis - averageCost * sellQty + outlay
+  const netCost = position.netCost - proceeds + outlay
+
+  return {
+    quantity,
+    averageCost: quantity > 0 ? costBasis / quantity : null,
+    netCostPerShare: quantity > 0 ? netCost / quantity : null,
+    netCost,
+    realisedGain: proceeds - averageCost * sellQty,
+    cashNeeded: outlay - proceeds,
+    invalid: null,
+  }
 }

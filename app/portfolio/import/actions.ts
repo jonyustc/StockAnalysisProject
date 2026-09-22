@@ -1,13 +1,19 @@
 'use server'
 
-import { eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, lt } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 
 import { db } from '@/db/client'
-import { listPortfolioTransactions } from '@/db/queries'
+import { listCompanyNames, listPortfolioTransactions } from '@/db/queries'
 import { accountSnapshots, boAccounts, companies, portfolioTransactions } from '@/db/schema'
 import { lifetimeReturn, type LifetimeReturn } from '@/lib/account-return'
-import { buildPortfolio } from '@/lib/portfolio'
+import {
+  alreadyRecorded,
+  detectPaidDividends,
+  matchCompany,
+  type StoredReceivable,
+} from '@/lib/dividends'
+import { buildPortfolio, type PortfolioTransaction } from '@/lib/portfolio'
 import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { extractTextItems, looksScanned } from '@/lib/statements/extract'
 import { parseLankaBanglaPortfolio } from '@/lib/statements/lankabangla'
@@ -30,6 +36,24 @@ export interface StatementPreview {
   /** Account totals to store as a snapshot, and the lifetime return they imply. */
   snapshot?: SnapshotFigures | null
   lifetime?: LifetimeReturn | null
+  /** Dividends declared on the last statement that this one shows were paid. */
+  dividends?: DividendSuggestion[]
+  /** Dividend cash that arrived since the last statement with no declared dividend to explain it. */
+  unexplainedDividendCash?: number
+  /** The statement the dividends were compared with, if there was one. */
+  previousAsOf?: string | null
+}
+
+export interface DividendSuggestion {
+  key: string
+  symbol: string | null
+  companyName: string
+  recordDate: string | null
+  gross: number
+  taxWithheld: number
+  caveat: string | null
+  /** Already in the ledger — recorded by hand, or by an earlier import. */
+  recorded: boolean
 }
 
 /** What a snapshot stores, as the broker printed it. */
@@ -45,9 +69,13 @@ export interface SnapshotFigures {
   ipoPayment: number
   shareTransferOut: number
   realisedGain: number
+  dividendsReceivable: StoredReceivable[]
 }
 
-function snapshotFrom(statement: ParsedStatement): SnapshotFigures | null {
+function snapshotFrom(
+  statement: ParsedStatement,
+  receivables: StoredReceivable[],
+): SnapshotFigures | null {
   const status = statement.accountStatus
   const marketValue = status?.marketValue ?? statement.totals?.marketValue ?? null
   if (!status || marketValue === null || statement.cashBalance === null) return null
@@ -64,6 +92,7 @@ function snapshotFrom(statement: ParsedStatement): SnapshotFigures | null {
     ipoPayment: status.ipoPayment ?? 0,
     shareTransferOut: status.shareTransferOut ?? 0,
     realisedGain: status.realisedGain ?? 0,
+    dividendsReceivable: receivables,
   }
 }
 
@@ -133,10 +162,17 @@ export async function previewStatement(
 
   // The ledger positions for this account only. A new account has none.
   let positions: ReturnType<typeof buildPortfolio>['positions'] = []
+  let ledger: PortfolioTransaction[] = []
   if (account) {
-    const transactions = await listPortfolioTransactions()
-    positions = buildPortfolio(transactions, new Map(), new Date(), account.id).positions
+    ledger = await listPortfolioTransactions()
+    positions = buildPortfolio(ledger, new Map(), new Date(), account.id).positions
   }
+
+  const names = await listCompanyNames()
+  const receivables: StoredReceivable[] = statement.dividendsReceivable.map((r) => ({
+    ...r,
+    symbol: matchCompany(r.companyName, names),
+  }))
 
   // Holdings whose own arithmetic failed are left out entirely.
   const clean = statement.holdings.filter((h) => h.issues.length === 0)
@@ -152,11 +188,52 @@ export async function previewStatement(
 
   // Figures with issues do not become a snapshot: a stored total that does not
   // add up would quietly skew every return computed from it afterwards.
-  const snapshot = statement.issues.length === 0 ? snapshotFrom(statement) : null
+  const snapshot = statement.issues.length === 0 ? snapshotFrom(statement, receivables) : null
+
+  // Which dividends declared on the previous statement this one shows paid.
+  const [previous] =
+    account && snapshot
+      ? await db
+          .select({
+            asOf: accountSnapshots.asOf,
+            cashDividend: accountSnapshots.cashDividend,
+            dividendsReceivable: accountSnapshots.dividendsReceivable,
+          })
+          .from(accountSnapshots)
+          .where(and(eq(accountSnapshots.boAccountId, account.id), lt(accountSnapshots.asOf, statement.asOf)))
+          .orderBy(desc(accountSnapshots.asOf))
+          .limit(1)
+      : []
+
+  const detection =
+    previous && snapshot
+      ? detectPaidDividends(
+          previous.dividendsReceivable,
+          receivables,
+          snapshot.cashDividend - Number(previous.cashDividend),
+        )
+      : null
+
+  const dividends: DividendSuggestion[] = (detection?.paid ?? []).map((p) => ({
+    key: `${p.receivable.companyName}|${p.receivable.recordDate ?? ''}`,
+    symbol: p.receivable.symbol,
+    companyName: p.receivable.companyName,
+    recordDate: p.receivable.recordDate,
+    gross: p.gross,
+    taxWithheld: p.taxWithheld,
+    caveat: p.caveat,
+    recorded:
+      !!account &&
+      !!p.receivable.symbol &&
+      alreadyRecorded(ledger, account.id, p.receivable.symbol, p.gross, p.receivable.recordDate),
+  }))
 
   return {
     snapshot,
     lifetime: snapshot ? lifetimeReturn({ asOf: statement.asOf, ...snapshot }) : null,
+    dividends,
+    unexplainedDividendCash: detection?.unexplained ?? 0,
+    previousAsOf: previous?.asOf ?? null,
     ok: true,
     message: account
       ? `Read ${statement.holdings.length} holding(s) for ${account.name}, as of ${statement.asOf}.`
@@ -183,6 +260,31 @@ interface PlannedRow {
   /** What the ledger held when the preview was made. */
   expectedLedgerQty: number
   kind: string
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** Receivables come back from the browser; keep only well-formed entries. */
+function cleanReceivables(value: unknown): StoredReceivable[] | null {
+  if (!Array.isArray(value)) return null
+  const ok = value.every(
+    (r) =>
+      r &&
+      typeof r === 'object' &&
+      typeof r.companyName === 'string' &&
+      (r.symbol === null || typeof r.symbol === 'string') &&
+      [r.holding, r.rate, r.entitlement].every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0) &&
+      (r.recordDate === null || (typeof r.recordDate === 'string' && DATE.test(r.recordDate))),
+  )
+  if (!ok) return null
+  return value.map((r) => ({
+    companyName: String(r.companyName).slice(0, 200),
+    symbol: r.symbol,
+    holding: r.holding,
+    rate: r.rate,
+    entitlement: r.entitlement,
+    recordDate: r.recordDate,
+  }))
 }
 
 /**
@@ -229,14 +331,37 @@ export async function applyStatement(
         typeof parsed.realisedGain === 'number' && Number.isFinite(parsed.realisedGain) &&
         (parsed.costOfHoldings === null ||
           (typeof parsed.costOfHoldings === 'number' && Number.isFinite(parsed.costOfHoldings)))
-      if (!valid) return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
-      snapshot = parsed
+      const receivables = cleanReceivables(parsed.dividendsReceivable ?? [])
+      if (!valid || !receivables) {
+        return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
+      }
+      snapshot = { ...parsed, dividendsReceivable: receivables }
     } catch {
       return { ok: false, message: 'The account figures could not be read. Upload the statement again.' }
     }
   }
 
-  if (rows.length === 0 && !snapshot) {
+  // Paid dividends the person ticked, re-validated like everything else.
+  let dividends: DividendSuggestion[] = []
+  try {
+    dividends = JSON.parse(String(formData.get('dividends') ?? '[]'))
+  } catch {
+    return { ok: false, message: 'The dividend list could not be read. Upload the statement again.' }
+  }
+  const tickedDividends = new Set(formData.getAll('dividend').map(String))
+  dividends = dividends.filter((d) => tickedDividends.has(d.key) && !d.recorded)
+  for (const d of dividends) {
+    if (
+      typeof d.symbol !== 'string' ||
+      !(typeof d.gross === 'number' && d.gross > 0) ||
+      !(typeof d.taxWithheld === 'number' && d.taxWithheld >= 0 && d.taxWithheld <= d.gross) ||
+      (d.recordDate !== null && !DATE.test(String(d.recordDate)))
+    ) {
+      return { ok: false, message: `Bad dividend figures for ${d.companyName}.` }
+    }
+  }
+
+  if (rows.length === 0 && !snapshot && dividends.length === 0) {
     return { ok: false, message: 'Nothing was ticked, so nothing was recorded.' }
   }
 
@@ -312,6 +437,7 @@ export async function applyStatement(
         ipoPayment: String(snapshot.ipoPayment),
         shareTransferOut: String(snapshot.shareTransferOut),
         realisedGain: String(snapshot.realisedGain),
+        dividendsReceivable: snapshot.dividendsReceivable,
       }
       await tx
         .insert(accountSnapshots)
@@ -328,31 +454,28 @@ export async function applyStatement(
       where: eq(portfolioTransactions.boAccountId, accountId),
       with: { company: { columns: { dseSymbol: true } } },
     })
-    const current = buildPortfolio(
-      transactions.map((t) => ({
-        accountId: t.boAccountId,
-        symbol: t.company.dseSymbol,
-        tradeDate: t.tradeDate,
-        txnType: t.txnType,
-        quantity: t.quantity === null ? null : Number(t.quantity),
-        pricePerShare: t.pricePerShare === null ? null : Number(t.pricePerShare),
-        grossAmount: t.grossAmount === null ? null : Number(t.grossAmount),
-        commission: Number(t.commission),
-        taxWithheld: Number(t.taxWithheld),
-      })),
-      new Map(),
-      new Date(),
-      accountId,
-    )
+    const ledger: PortfolioTransaction[] = transactions.map((t) => ({
+      accountId: t.boAccountId,
+      symbol: t.company.dseSymbol,
+      tradeDate: t.tradeDate,
+      txnType: t.txnType,
+      quantity: t.quantity === null ? null : Number(t.quantity),
+      pricePerShare: t.pricePerShare === null ? null : Number(t.pricePerShare),
+      grossAmount: t.grossAmount === null ? null : Number(t.grossAmount),
+      commission: Number(t.commission),
+      taxWithheld: Number(t.taxWithheld),
+    }))
+    const current = buildPortfolio(ledger, new Map(), new Date(), accountId)
     const heldNow = new Map(current.positions.map((p) => [p.symbol, p.quantity]))
 
+    const wanted = [...rows.map((r) => r.symbol), ...dividends.map((d) => d.symbol!)]
     const companyRows =
-      rows.length === 0
+      wanted.length === 0
         ? []
         : await tx
             .select({ id: companies.id, symbol: companies.dseSymbol })
             .from(companies)
-            .where(inArray(companies.dseSymbol, rows.map((r) => r.symbol)))
+            .where(inArray(companies.dseSymbol, wanted))
     const companyId = new Map(companyRows.map((c) => [c.symbol, c.id]))
 
     const recorded: string[] = []
@@ -386,6 +509,43 @@ export async function applyStatement(
       recorded.push(`${row.symbol} ${row.txnType} ${row.quantity}`)
     }
 
+    for (const d of dividends) {
+      const symbol = d.symbol!
+      const id = companyId.get(symbol)
+      if (!id) {
+        skipped.push(`${d.companyName} dividend (not a tracked company)`)
+        continue
+      }
+      // Checked against the ledger now, not the preview: a second submit, or
+      // a dividend recorded by hand meanwhile, must not be counted twice.
+      if (alreadyRecorded(ledger, accountId, symbol, d.gross, d.recordDate)) {
+        skipped.push(`${symbol} dividend (already recorded)`)
+        continue
+      }
+      await tx.insert(portfolioTransactions).values({
+        companyId: id,
+        boAccountId: accountId,
+        tradeDate: asOf,
+        txnType: 'dividend',
+        grossAmount: String(d.gross),
+        taxWithheld: String(d.taxWithheld),
+        commission: '0',
+        notes: `Paid between statements; found by the ${statementLabel}. Record date ${d.recordDate ?? 'unknown'}. Tax inferred from the cash credited.`,
+      })
+      ledger.push({
+        accountId,
+        symbol,
+        tradeDate: asOf,
+        txnType: 'dividend',
+        quantity: null,
+        pricePerShare: null,
+        grossAmount: d.gross,
+        commission: 0,
+        taxWithheld: d.taxWithheld,
+      })
+      recorded.push(`${symbol} dividend ৳${d.gross.toFixed(2)}`)
+    }
+
     const parts = [
       recorded.length > 0 ? `recorded ${recorded.join(', ')}` : null,
       snapshotSaved ? `saved the ${asOf} account snapshot` : null,
@@ -402,6 +562,7 @@ export async function applyStatement(
   revalidatePath('/portfolio')
   revalidatePath('/portfolio/transactions')
   revalidatePath('/portfolio/import')
+  revalidatePath('/portfolio/dividends')
 
   return result
 }

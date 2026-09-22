@@ -5,6 +5,9 @@ import {
   buildHolding,
   buildPortfolio,
   cashFlowOf,
+  costTimeline,
+  freeSharePlan,
+  simulateTrade,
   mergeBySymbol,
   xirr,
   type PortfolioTransaction,
@@ -449,5 +452,100 @@ describe('annualising', () => {
     const p = buildPortfolio(opening('2025-09-22'), new Map([['SQURPHARMA', 230]]), new Date('2026-09-22T12:00:00Z'))
     assert.ok(p.xirr !== null)
     assert.ok(p.historyDays >= 365)
+  })
+})
+
+describe('net cost', () => {
+  // Buy 100 at 200, sell 50 at 300, take a dividend, buy 50 back at 250.
+  const trades = [
+    txn({ tradeDate: '2025-01-01', quantity: 100, pricePerShare: 200 }),
+    txn({ tradeDate: '2025-03-01', txnType: 'sell', quantity: 50, pricePerShare: 300 }),
+    txn({ tradeDate: '2025-04-01', txnType: 'dividend', quantity: null, pricePerShare: null, grossAmount: 500, taxWithheld: 50 }),
+    txn({ tradeDate: '2025-05-01', quantity: 50, pricePerShare: 250 }),
+  ]
+
+  it('falls with profitable sales and dividends, where average cost does not', () => {
+    const h = buildHolding('X', trades, 250, AS_OF)
+    // Average cost: 50 left at 200, plus 50 at 250.
+    assert.equal(h.averageCost, 225)
+    // In: 20,000 + 12,500. Back: 15,000 + 450.
+    assert.equal(h.invested, 32500)
+    assert.equal(h.returned, 15450)
+    assert.equal(h.netCostPerShare, 170.5)
+  })
+
+  it('goes to zero and below once everything paid in has come back', () => {
+    const h = buildHolding('X', [
+      txn({ quantity: 100, pricePerShare: 100 }),
+      txn({ tradeDate: '2025-06-01', txnType: 'sell', quantity: 60, pricePerShare: 200 }),
+    ], 200, AS_OF)
+    assert.equal(h.netCost, -2000)
+    assert.equal(h.netCostPerShare, -50)
+  })
+
+  it('is summed across accounts', () => {
+    const merged = mergeBySymbol([
+      buildHolding('X', [txn({ quantity: 10, pricePerShare: 100 })], 100, AS_OF),
+      buildHolding('X', [
+        txn({ accountId: 2, quantity: 10, pricePerShare: 100 }),
+        txn({ accountId: 2, tradeDate: '2025-02-01', txnType: 'sell', quantity: 5, pricePerShare: 200 }),
+      ], 100, AS_OF),
+    ])[0]
+    // In 2,000; back 1,000; 15 held.
+    assert.equal(merged.netCost, 1000)
+    assert.ok(Math.abs(merged.netCostPerShare! - 1000 / 15) < 1e-9)
+  })
+
+  it('traces each step', () => {
+    const steps = costTimeline(trades)
+    assert.deepEqual(
+      steps.map((s) => [s.held, s.averageCost, s.netCostPerShare]),
+      [
+        [100, 200, 200],
+        [50, 200, 100],
+        [50, 200, 91],
+        [100, 225, 170.5],
+      ],
+    )
+  })
+})
+
+describe('freeSharePlan', () => {
+  it('says how many to sell to leave the rest free', () => {
+    // Net cost 10,000; at 250 with no commission, sell 40, keep 60.
+    assert.deepEqual(freeSharePlan({ quantity: 100, netCost: 10000 }, 250, 0), { sell: 40, keep: 60 })
+    // Commission means one more share.
+    assert.deepEqual(freeSharePlan({ quantity: 100, netCost: 10000 }, 250, 0.005), { sell: 41, keep: 59 })
+  })
+
+  it('has nothing to say when already free, or not reachable', () => {
+    assert.equal(freeSharePlan({ quantity: 100, netCost: -5 }, 250), null)
+    assert.equal(freeSharePlan({ quantity: 100, netCost: 30000 }, 250), null)
+    assert.equal(freeSharePlan({ quantity: 100, netCost: 100 }, null), null)
+  })
+})
+
+describe('simulateTrade', () => {
+  const position = { quantity: 100, costBasis: 20000, netCost: 20000 }
+
+  it('sell high, buy back lower: same shares, lower cost', () => {
+    const r = simulateTrade(position, { sellQty: 50, sellPrice: 300, buyQty: 50, buyPrice: 250, commissionRate: 0 })
+    assert.equal(r.quantity, 100)
+    // 50 left at 200 + 50 at 250.
+    assert.equal(r.averageCost, 225)
+    // 20,000 - 15,000 + 12,500 over 100.
+    assert.equal(r.netCostPerShare, 175)
+    assert.equal(r.realisedGain, 5000)
+    assert.equal(r.cashNeeded, -2500)
+  })
+
+  it('charges commission both ways', () => {
+    const r = simulateTrade(position, { sellQty: 10, sellPrice: 100, buyQty: 0, buyPrice: 0, commissionRate: 0.005 })
+    assert.equal(r.realisedGain, 995 - 2000)
+  })
+
+  it('refuses to sell more than is held', () => {
+    const r = simulateTrade(position, { sellQty: 101, sellPrice: 1, buyQty: 0, buyPrice: 0, commissionRate: 0 })
+    assert.match(r.invalid ?? '', /100 held/)
   })
 })

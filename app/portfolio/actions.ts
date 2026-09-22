@@ -79,6 +79,9 @@ export async function addTransaction(
   if (commission < 0 || taxWithheld < 0) {
     return { ok: false, message: 'Commission and tax cannot be negative.' }
   }
+  if (txnType === 'dividend' && grossAmount !== null && taxWithheld > grossAmount) {
+    return { ok: false, message: 'The tax withheld cannot be more than the dividend.' }
+  }
 
   await db.insert(portfolioTransactions).values({
     companyId: company.id,
@@ -97,6 +100,7 @@ export async function addTransaction(
 
   revalidatePath('/portfolio')
   revalidatePath('/portfolio/transactions')
+  revalidatePath('/portfolio/dividends')
   revalidatePath(`/companies/${symbol}`)
 
   return {

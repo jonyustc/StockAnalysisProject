@@ -420,6 +420,9 @@ export async function listAccountSnapshots() {
       shareTransferOut: accountSnapshots.shareTransferOut,
       cashDividend: accountSnapshots.cashDividend,
       realisedGain: accountSnapshots.realisedGain,
+      ipoPayment: accountSnapshots.ipoPayment,
+      ipoRefund: accountSnapshots.ipoRefund,
+      dividendsReceivable: accountSnapshots.dividendsReceivable,
     })
     .from(accountSnapshots)
     .innerJoin(boAccounts, eq(boAccounts.id, accountSnapshots.boAccountId))
@@ -440,5 +443,15 @@ export async function listAccountSnapshots() {
     shareTransferOut: Number(row.shareTransferOut),
     cashDividend: Number(row.cashDividend),
     realisedGain: Number(row.realisedGain),
+    ipoPayment: Number(row.ipoPayment),
+    ipoRefund: Number(row.ipoRefund),
+    dividendsReceivable: row.dividendsReceivable,
   }))
+}
+
+/** Name and short name of every company, to match names on broker statements. */
+export async function listCompanyNames() {
+  return db
+    .select({ symbol: companies.dseSymbol, name: companies.name, shortName: companies.shortName })
+    .from(companies)
 }

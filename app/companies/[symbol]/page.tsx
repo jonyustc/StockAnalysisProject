@@ -7,6 +7,7 @@ import {
   getCorporateActionsBySymbol,
   getFactHistory,
   getLatestQuotes,
+  listPortfolioTransactions,
 } from '@/db/queries'
 import { fiscalYearBounds, fiscalYearRangeLabel } from '@/lib/fiscal'
 import {
@@ -15,6 +16,7 @@ import {
   summariseHistory,
   totalDebt,
 } from '@/lib/metrics'
+import { buildPortfolio } from '@/lib/portfolio'
 import { computeValuation } from '@/lib/prices'
 import { formatBDT, formatPercent, formatPerShare, formatRatio } from '@/lib/units'
 
@@ -30,10 +32,20 @@ export default async function CompanyPage({
   if (!company) notFound()
 
   const fye = { month: company.fiscalYearEndMonth, day: company.fiscalYearEndDay }
-  const [{ years: reported, factCount, unverifiedCount, disputedCount }, quotes, actionsBySymbol] =
-    await Promise.all([getFactHistory(company.id), getLatestQuotes(), getCorporateActionsBySymbol()])
+  const [{ years: reported, factCount, unverifiedCount, disputedCount }, quotes, actionsBySymbol, ledger] =
+    await Promise.all([
+      getFactHistory(company.id),
+      getLatestQuotes(),
+      getCorporateActionsBySymbol(),
+      listPortfolioTransactions(),
+    ])
 
   const quote = quotes.get(company.dseSymbol)
+  const own = ledger.filter((t) => t.symbol === company.dseSymbol)
+  const holding =
+    own.length > 0
+      ? buildPortfolio(own, new Map(quote ? [[company.dseSymbol, quote.close]] : [])).holdings[0]
+      : null
   const actions = actionsBySymbol.get(company.dseSymbol) ?? []
 
   // Restate per-share figures onto today's share base before anything is
@@ -113,6 +125,33 @@ export default async function CompanyPage({
           </Link>
         </div>
       </header>
+
+      {holding && holding.quantity > 0 ? (
+        <Link
+          href={`/portfolio/stock/${company.dseSymbol}`}
+          className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded border border-sky-900/60 bg-sky-950/20 px-4 py-2.5 text-xs text-neutral-400 hover:border-sky-800"
+        >
+          <span>
+            You hold <strong className="font-medium text-neutral-100">{holding.quantity.toLocaleString()}</strong>
+            {holding.accountCount > 1 ? ` across ${holding.accountCount} accounts` : ''}
+          </span>
+          <span>avg cost {formatPerShare(holding.averageCost)}</span>
+          <span>
+            net cost{' '}
+            {holding.netCostPerShare !== null && holding.netCostPerShare <= 0 ? (
+              <span className="text-emerald-400">free</span>
+            ) : (
+              formatPerShare(holding.netCostPerShare)
+            )}
+          </span>
+          {holding.unrealisedGain !== null ? (
+            <span className={holding.unrealisedGain >= 0 ? 'text-emerald-500' : 'text-red-400'}>
+              {formatBDT(holding.unrealisedGain)} ({formatPercent(holding.unrealisedPct, 1, true)})
+            </span>
+          ) : null}
+          <span className="ml-auto text-sky-400">Cost history →</span>
+        </Link>
+      ) : null}
 
       {years.length === 0 ? (
         <p className="rounded border border-neutral-800 bg-neutral-900/40 p-6 text-sm text-neutral-400">
