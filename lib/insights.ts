@@ -180,7 +180,9 @@ export interface Earnings {
 
 export interface PeBand {
   samples: number
+  /** The first and last day a ratio could be formed for. */
   from: string
+  to: string
   low: number
   median: number
   high: number
@@ -211,6 +213,7 @@ export function peBand(
 ): PeBand | null {
   const known = [...earnings].sort((a, b) => (a.from < b.from ? -1 : 1))
   const ratios: number[] = []
+  const days: string[] = []
 
   for (const candle of history) {
     if (candle.date < from) continue
@@ -219,7 +222,10 @@ export function peBand(
       if (e.from <= candle.date) eps = e.eps
       else break
     }
-    if (eps !== null && eps > 0) ratios.push(candle.close / eps)
+    if (eps !== null && eps > 0) {
+      ratios.push(candle.close / eps)
+      days.push(candle.date)
+    }
   }
 
   if (ratios.length < 60) return null
@@ -229,9 +235,11 @@ export function peBand(
   const high = percentile(ratios, 0.75)!
   const current = epsNow !== null && epsNow > 0 ? price / epsNow : null
 
+  const covered = [...days].sort()
   return {
     samples: ratios.length,
-    from,
+    from: covered[0],
+    to: covered[covered.length - 1],
     low,
     median: mid,
     high,

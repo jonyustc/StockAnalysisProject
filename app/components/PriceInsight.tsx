@@ -25,6 +25,23 @@ export function PriceInsight({ insight, holding }: { insight: StockInsight; hold
   const { valuation: v, band, seasons, ownYear, fall, coverage } = insight
   const price = insight.price
 
+  // Prefer the range from stored prices: it knows the dates. The feed's
+  // 52-week figures stand in until a year of history has built up.
+  const range =
+    ownYear ??
+    (v && v.rangePosition !== null && insight.yearHigh !== null && insight.yearLow !== null
+      ? {
+          high: insight.yearHigh,
+          low: insight.yearLow,
+          highDate: null,
+          lowDate: null,
+          position: v.rangePosition,
+          belowHigh: v.belowHigh ?? 0,
+          aboveLow: v.aboveLow ?? 0,
+          days: 0,
+        }
+      : null)
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -35,16 +52,19 @@ export function PriceInsight({ insight, holding }: { insight: StockInsight; hold
         </p>
       </div>
 
-      {/* Where in the 52-week range -------------------------------------- */}
-      {v && v.rangePosition !== null && price !== null ? (
+      {/* Where in the 52-week range --------------------------------------
+          Worked out from the prices stored here when there are a year of
+          them, because those say when the high and low happened; otherwise
+          from the feed's own 52-week figures, which do not. */}
+      {range && price !== null ? (
         <div className="rounded border border-neutral-800 bg-neutral-900/40 p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
             <p className="text-neutral-300">
-              <strong className="font-medium text-neutral-100">{formatPercent(v.rangePosition, 0)}</strong> of the way up its
+              <strong className="font-medium text-neutral-100">{formatPercent(range.position, 0)}</strong> of the way up its
               52-week range
             </p>
             <p className="text-xs text-neutral-500">
-              {formatPercent(v.belowHigh, 1)} from the high · {formatPercent(v.aboveLow, 1, true)} above the low
+              {formatPercent(range.belowHigh, 1)} from the high · {formatPercent(range.aboveLow, 1, true)} above the low
             </p>
           </div>
 
@@ -52,21 +72,27 @@ export function PriceInsight({ insight, holding }: { insight: StockInsight; hold
             <div className="relative h-2 rounded bg-neutral-800">
               <div
                 className="absolute -top-1 h-4 w-0.5 bg-sky-400"
-                style={{ left: `${Math.min(100, Math.max(0, v.rangePosition * 100))}%` }}
+                style={{ left: `${Math.min(100, Math.max(0, (range.position ?? 0) * 100))}%` }}
               />
             </div>
             <div className="mt-1 flex justify-between text-xs text-neutral-500">
-              <span>low {taka(insight.yearLow)}</span>
+              <span>
+                low {taka(range.low)}
+                {range.lowDate ? ` · ${formatTradeDate(range.lowDate)}` : ''}
+              </span>
               <span className="text-neutral-300">now {taka(price)}</span>
-              <span>high {taka(insight.yearHigh)}</span>
+              <span>
+                high {taka(range.high)}
+                {range.highDate ? ` · ${formatTradeDate(range.highDate)}` : ''}
+              </span>
             </div>
           </div>
 
-          {ownYear?.highDate && ownYear.lowDate ? (
+          {fall ? (
             <p className="mt-3 text-xs text-neutral-500">
-              In the prices stored here, the year&apos;s high was {taka(ownYear.high)} on {formatTradeDate(ownYear.highDate)} and
-              the low {taka(ownYear.low)} on {formatTradeDate(ownYear.lowDate)}.
-              {fall ? ` Worst fall from a peak: ${formatPercent(fall.worst, 0)}.` : ''}
+              Worst fall from a peak in the history stored here: {formatPercent(fall.worst, 0)}
+              {fall.peakDate && fall.troughDate ? `, ${formatTradeDate(fall.peakDate)} to ${formatTradeDate(fall.troughDate)}` : ''}.
+              Now {formatPercent(fall.fromPeak, 1)} from its highest close.
             </p>
           ) : null}
         </div>
@@ -110,9 +136,9 @@ export function PriceInsight({ insight, holding }: { insight: StockInsight; hold
       {band ? (
         <div className="rounded border border-neutral-800 bg-neutral-900/40 p-4 text-sm">
           <p className="text-neutral-300">
-            Against its own past: it has traded between{' '}
+            Against its own past: it has spent half its days between{' '}
             <strong className="font-medium text-neutral-100">{ratio(band.low)}</strong> and{' '}
-            <strong className="font-medium text-neutral-100">{ratio(band.high)}</strong> times earnings, middling{' '}
+            <strong className="font-medium text-neutral-100">{ratio(band.high)}</strong> times earnings, the middle day at{' '}
             {ratio(band.median)}. Today&apos;s {ratio(band.current)} is{' '}
             <strong className={band.rank !== null && band.rank < 0.4 ? 'text-emerald-400' : band.rank !== null && band.rank > 0.6 ? 'text-amber-400' : 'text-neutral-200'}>
               {band.rank === null ? '—' : `cheaper than ${formatPercent(1 - band.rank, 0)} of those days`}
@@ -122,8 +148,8 @@ export function PriceInsight({ insight, holding }: { insight: StockInsight; hold
           <p className="mt-2 text-xs text-neutral-500">
             At today&apos;s earnings, those multiples put the cheap end at{' '}
             <span className="text-emerald-400">{taka(band.priceAtLow)}</span>, the middle at {taka(band.priceAtMedian)} and the
-            dear end at <span className="text-amber-400">{taka(band.priceAtHigh)}</span>. From {band.samples} trading days since{' '}
-            {band.from}, each valued on the earnings published by then.
+            dear end at <span className="text-amber-400">{taka(band.priceAtHigh)}</span>. From {band.samples} trading days,{' '}
+            {band.from} to {band.to}, each valued on the earnings published by then.
           </p>
         </div>
       ) : null}

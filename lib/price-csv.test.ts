@@ -1,21 +1,44 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { parseDate, parsePriceCsv } from './price-csv'
+import { detectDateOrder, parseDate, parsePriceCsv, splitCsvLine } from './price-csv'
 
 describe('parseDate', () => {
   it('reads the formats sources write', () => {
-    assert.equal(parseDate('2026-09-22').date, '2026-09-22')
-    assert.equal(parseDate('22-Sep-2026').date, '2026-09-22')
-    assert.equal(parseDate('22/09/2026').date, '2026-09-22')
-    // Day first is impossible here, so it must be month first.
-    assert.equal(parseDate('09/22/2026').date, '2026-09-22')
-    assert.equal(parseDate('not a date').date, null)
+    assert.equal(parseDate('2026-09-22'), '2026-09-22')
+    assert.equal(parseDate('22-Sep-2026'), '2026-09-22')
+    assert.equal(parseDate('22/09/2026', 'dayFirst'), '2026-09-22')
+    assert.equal(parseDate('09/22/2026', 'monthFirst'), '2026-09-22')
+    assert.equal(parseDate('not a date'), null)
   })
 
-  it('says when day-first was an assumption', () => {
-    assert.equal(parseDate('05/09/2026').assumedDayFirst, true)
-    assert.equal(parseDate('22/09/2026').assumedDayFirst, false)
+  it('reads a slashed date the way it is told to', () => {
+    assert.equal(parseDate('05/09/2026', 'dayFirst'), '2026-09-05')
+    assert.equal(parseDate('05/09/2026', 'monthFirst'), '2026-05-09')
+  })
+})
+
+describe('detectDateOrder', () => {
+  it('lets one unambiguous date settle the whole file', () => {
+    assert.deepEqual(detectDateOrder(['9/5/2026', '9/22/2026']), { order: 'monthFirst', certain: true, conflict: false })
+    assert.deepEqual(detectDateOrder(['5/9/2026', '22/9/2026']), { order: 'dayFirst', certain: true, conflict: false })
+  })
+
+  it('falls back to day first when nothing settles it', () => {
+    const r = detectDateOrder(['5/9/2026', '6/9/2026'])
+    assert.equal(r.order, 'dayFirst')
+    assert.equal(r.certain, false)
+  })
+
+  it('reports a file that contradicts itself', () => {
+    assert.equal(detectDateOrder(['22/09/2026', '09/22/2026']).conflict, true)
+  })
+})
+
+describe('splitCsvLine', () => {
+  it('keeps a quoted field whole, delimiters and all', () => {
+    assert.deepEqual(splitCsvLine('1,9/22/2026,SQR,216,"1,023,085"', ','), ['1', '9/22/2026', 'SQR', '216', '1,023,085'])
+    assert.deepEqual(splitCsvLine('a,"say ""hi""",b', ','), ['a', 'say "hi"', 'b'])
   })
 })
 
@@ -30,14 +53,30 @@ describe('parsePriceCsv', () => {
     ])
   })
 
-  it('matches columns by meaning, not by exact heading', () => {
-    const csv = 'TRADING CODE\tTRADE DATE\tOPENP*\tHIGH\tLOW\tCLOSEP*\tVOLUME\nAAA\t22-Sep-2026\t99\t102\t98\t101\t1,234\n'
+  it('reads a DSE export: its headings, its quoted thousands, its month-first dates', () => {
+    const csv =
+      '#,DATE,TRADING CODE,LTP*,HIGH,LOW,OPENP*,CLOSEP*,YCP,TRADE,VALUE (mn),VOLUME\n' +
+      ',,,,,,,,,,,\n' +
+      '1,9/22/2026,SQURPHARMA,216,216.5,215.5,216,216,215.8,"1,523",221.023,"1,023,085"\n' +
+      '2,9/5/2026,SQURPHARMA,210,211,209,209.5,210.5,210,"1,000",100,"500,000"\n'
     const { rows, issues } = parsePriceCsv(csv)
-    assert.deepEqual(issues, [])
+
+    // The padding line is not an unreadable row.
+    assert.equal(issues.filter((i) => i.startsWith('Line')).length, 0)
     assert.deepEqual(
-      [rows[0].symbol, rows[0].date, rows[0].open, rows[0].high, rows[0].low, rows[0].close, rows[0].volume],
-      ['AAA', '2026-09-22', 99, 102, 98, 101, 1234],
+      rows.map((r) => [r.symbol, r.date, r.close, r.high, r.low, r.open, r.volume]),
+      [
+        ['SQURPHARMA', '2026-09-05', 210.5, 211, 209, 209.5, 500000],
+        ['SQURPHARMA', '2026-09-22', 216, 216.5, 215.5, 216, 1023085],
+      ],
     )
+    assert.ok(issues.some((i) => /month first/.test(i)))
+  })
+
+  it('refuses a file whose dates contradict each other', () => {
+    const { rows, issues } = parsePriceCsv('Date,Close\n22/09/2026,100\n09/22/2026,101\n', 'AAA')
+    assert.deepEqual(rows, [])
+    assert.ok(issues[0].includes('cannot be told'))
   })
 
   it('reports lines it cannot read instead of guessing', () => {
