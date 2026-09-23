@@ -28,7 +28,8 @@
     "prices:history": "tsx scripts/import-price-history.ts",
     "prices:history:supabase": "tsx scripts/import-price-history.ts --target=supabase",
     "prices:dse": "tsx scripts/fetch-dse-prices.ts",
-    "prices:dse:supabase": "tsx scripts/fetch-dse-prices.ts --target=supabase"
+    "prices:dse:supabase": "tsx scripts/fetch-dse-prices.ts --target=supabase",
+    "prices:dse:check": "tsx scripts/check-dse.ts"
   },
   "dependencies": {
     "dotenv": "^18.0.1",

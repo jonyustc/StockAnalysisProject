@@ -23,6 +23,7 @@ import { buildPortfolio, type PortfolioTransaction } from '@/lib/portfolio'
 import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { extractTextItems, looksScanned } from '@/lib/statements/extract'
 import { DSE_MAX_YEARS, fetchDseHistory } from '@/lib/dse-fetch'
+import { fetchDsePage } from '@/lib/dse-http'
 import { yearsAgo } from '@/lib/insight-inputs'
 import { detectDocument } from '@/lib/statements/detect'
 import { dhakaNow } from '@/lib/trading-calendar'
@@ -857,14 +858,7 @@ export async function fetchDsePrices(
     from,
     to,
     pauseMs: 400,
-    fetchPage: async (url) => {
-      const response = await fetch(url, {
-        cache: 'no-store',
-        headers: { accept: 'text/html', 'user-agent': 'dse-research/1.0 (personal portfolio tracker)' },
-        signal: AbortSignal.timeout(20_000),
-      })
-      return { ok: response.ok, status: response.status, text: await response.text() }
-    },
+    fetchPage: fetchDsePage,
   })
 
   if (history.rows.length === 0) {

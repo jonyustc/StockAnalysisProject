@@ -17,6 +17,7 @@ import { Client } from 'pg'
 
 import '../db/pg-types'
 import { fetchDseHistory } from '../lib/dse-fetch'
+import { fetchDsePage } from '../lib/dse-http'
 import type { PriceRow } from '../lib/price-csv'
 import { resolveTarget, sslFor } from './target'
 
@@ -51,14 +52,6 @@ function has(name: string): boolean {
 function positionalSymbol(): string | undefined {
   const word = ARGS.find((arg) => !arg.startsWith('-') && /^[A-Za-z0-9][A-Za-z0-9&.\-]{1,19}$/.test(arg))
   return word && !['held', 'all'].includes(word.toLowerCase()) && !/^\d+$/.test(word) ? word : undefined
-}
-
-const fetchPage = async (url: string) => {
-  const response = await fetch(url, {
-    headers: { accept: 'text/html', 'user-agent': 'dse-research/1.0 (personal portfolio tracker)' },
-    signal: AbortSignal.timeout(30_000),
-  })
-  return { ok: response.ok, status: response.status, text: await response.text() }
 }
 
 async function main() {
@@ -110,7 +103,7 @@ async function main() {
     console.log(`  ${choices.length} stock(s), ${from} to ${to}\n`)
 
     for (const { dse_symbol: symbol } of choices) {
-      const history = await fetchDseHistory({ symbol, from, to, fetchPage })
+      const history = await fetchDseHistory({ symbol, from, to, fetchPage: fetchDsePage })
       const windows = history.windows.length
       if (history.rows.length === 0) {
         console.log(`  ${symbol.padEnd(12)} nothing — ${history.issues[0] ?? 'no rows'}`)

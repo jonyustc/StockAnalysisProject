@@ -132,7 +132,7 @@ describe('fetchDseHistory', () => {
     assert.ok(asked.every((url) => url.includes('inst=AAAPHARMA')))
   })
 
-  it('reports a window that brought nothing instead of leaving a silent hole', async () => {
+  it('tries a dropped request again rather than reporting a hole', async () => {
     let call = 0
     const result = await fetchDseHistory({
       symbol: 'AAAPHARMA',
@@ -141,12 +141,47 @@ describe('fetchDseHistory', () => {
       pauseMs: 0,
       fetchPage: async () => {
         call += 1
-        return call === 1 ? { ok: false, status: 503, text: '' } : { ok: true, status: 200, text: page }
+        // Every other request fails, as DSE does under a run of them.
+        return call % 2 === 1 ? { ok: false, status: 503, text: '' } : { ok: true, status: 200, text: page }
       },
     })
     assert.equal(result.rows.length, 2)
-    assert.match(result.issues[0], /1 of \d+ windows brought nothing/)
-    assert.match(result.windows[0].issue!, /503/)
+    assert.deepEqual(result.issues, [])
+  })
+
+  it('reports a window that stays empty as a gap worth running again', async () => {
+    // The newest window fails both times; the older ones answer.
+    const newest = windowsFor('2024-09-23', '2026-09-23').at(-1)!
+    const result = await fetchDseHistory({
+      symbol: 'AAAPHARMA',
+      from: '2024-09-23',
+      to: '2026-09-23',
+      pauseMs: 0,
+      fetchPage: async (url) =>
+        url.includes(`startDate=${newest.from}`)
+          ? { ok: false, status: 503, text: '' }
+          : { ok: true, status: 200, text: page },
+    })
+    assert.equal(result.rows.length, 2)
+    assert.match(result.issues[0], /1 window brought nothing/)
+    assert.match(result.issues[0], /Running again fills them/)
+  })
+
+  it('treats empty windows older than the oldest row as where the archive starts', async () => {
+    // DSE keeps about two years; older windows answer with no table at all.
+    const result = await fetchDseHistory({
+      symbol: 'AAAPHARMA',
+      from: '2021-09-23',
+      to: '2026-09-23',
+      pauseMs: 0,
+      fetchPage: async (url) =>
+        url.includes('startDate=2021') || url.includes('startDate=2022') || url.includes('startDate=2023')
+          ? { ok: true, status: 200, text: '<html><body>No data found</body></html>' }
+          : { ok: true, status: 200, text: page },
+    })
+    assert.ok(result.rows.length > 0)
+    assert.match(result.issues[0], /does not go back further/)
+    assert.ok(!result.issues.some((i) => /Running again/.test(i)), 'not reported as a gap')
   })
 
   it('says when nothing came back at all', async () => {

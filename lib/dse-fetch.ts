@@ -23,6 +23,9 @@ export const DSE_MAX_YEARS = 3
 /** A guard on one request, so a mistyped range cannot fetch for ever. */
 export const MAX_WINDOWS = 20
 
+/** A dropped request is common enough to be worth one more try. */
+export const ATTEMPTS_PER_WINDOW = 2
+
 const DAY = 86_400_000
 const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10)
 
@@ -87,11 +90,20 @@ export async function fetchDseHistory({
     if (i > 0 && pauseMs > 0) await sleep(pauseMs)
 
     let report: FetchedWindow = { ...window, rows: 0, issue: null }
-    try {
-      const response = await fetchPage(dseArchiveUrl({ symbol, from: window.from, to: window.to }))
-      if (!response.ok) {
-        report = { ...report, issue: `DSE answered ${response.status}` }
-      } else {
+
+    // DSE drops a request now and then under a run of them, so a window is
+    // tried again before it is believed. A range the archive genuinely has
+    // nothing for answers the same way twice, and costs one extra request.
+    for (let attempt = 0; attempt < ATTEMPTS_PER_WINDOW; attempt += 1) {
+      if (attempt > 0) await sleep(pauseMs * (attempt + 1) || 500)
+
+      try {
+        const response = await fetchPage(dseArchiveUrl({ symbol, from: window.from, to: window.to }))
+        if (!response.ok) {
+          report = { ...report, issue: `DSE answered ${response.status}` }
+          continue
+        }
+
         const parsed = parseDseArchive(response.text)
         for (const row of parsed.rows) byDate.set(`${row.symbol}|${row.date}`, row)
         report = {
@@ -99,22 +111,38 @@ export async function fetchDseHistory({
           rows: parsed.rows.length,
           issue: parsed.rows.length === 0 ? (parsed.issues[0] ?? 'nothing returned') : null,
         }
+        if (parsed.rows.length > 0) break
+      } catch (error) {
+        // "fetch failed" says nothing; the reason is in its cause.
+        const cause = error instanceof Error ? (error.cause as { code?: string; message?: string } | undefined) : undefined
+        const detail = [cause?.code, cause?.message].filter(Boolean).join(' ')
+        report = { ...report, issue: detail || (error instanceof Error ? error.message : 'could not be fetched') }
       }
-    } catch (error) {
-      report = { ...report, issue: error instanceof Error ? error.message : 'could not be fetched' }
     }
     reports.push(report)
   }
 
-  const failed = reports.filter((r) => r.issue !== null && r.rows === 0)
-  if (failed.length === reports.length) {
-    issues.push(`Nothing came back for ${symbol}. ${failed[0]?.issue ?? ''}`.trim())
-  } else if (failed.length > 0) {
-    issues.push(
-      `${failed.length} of ${reports.length} windows brought nothing (${failed.map((f) => `${f.from}→${f.to}`).join(', ')}), so those dates may be missing.`,
-    )
+  const rows = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+  const earliest = rows[0]?.date
+
+  const empty = reports.filter((r) => r.issue !== null && r.rows === 0)
+  // Empty windows that end before the oldest day anything came back for are
+  // not gaps: that is simply where DSE's archive starts.
+  const beforeTheArchive = earliest ? empty.filter((r) => r.to < earliest) : []
+  const gaps = empty.filter((r) => !beforeTheArchive.includes(r))
+
+  if (rows.length === 0) {
+    issues.push(`Nothing came back for ${symbol}. ${empty[0]?.issue ?? ''}`.trim())
+  } else {
+    if (beforeTheArchive.length > 0) {
+      issues.push(`DSE returned nothing before ${earliest}; its day-end archive does not go back further.`)
+    }
+    if (gaps.length > 0) {
+      issues.push(
+        `${gaps.length} window${gaps.length === 1 ? '' : 's'} brought nothing (${gaps.map((f) => `${f.from}→${f.to}`).join(', ')}), so those dates may be missing. Running again fills them.`,
+      )
+    }
   }
 
-  const rows = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
   return { rows, windows: reports, issues }
 }
