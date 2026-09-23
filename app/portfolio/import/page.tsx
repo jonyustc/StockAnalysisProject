@@ -37,8 +37,10 @@ export default async function ImportPage() {
           </li>
           <li>
             <strong className="font-medium text-neutral-400">Price history (CSV)</strong> — daily
-            closes from any export, which is what the valuation insights compare against. Columns are
-            matched by meaning; a day already stored is replaced, never duplicated.
+            closes from DSE, investing.com or any other export: the years the valuation insights
+            compare against. Columns are matched by meaning, so a file naming its close &ldquo;Price&rdquo;
+            and its volume &ldquo;1.02M&rdquo; reads as well as DSE&apos;s own. A file that does not name its
+            stock takes the one chosen beside it. A day already stored is replaced, never duplicated.
           </li>
         </ul>
         <p className="mt-2 text-xs text-neutral-600">
@@ -46,7 +48,7 @@ export default async function ImportPage() {
         </p>
       </header>
 
-      <ImportForm />
+      <ImportForm symbols={companies.map((c) => c.symbol).sort()} />
 
       <section className="space-y-2 border-t border-neutral-800 pt-6">
         <h2 className="text-sm font-medium text-neutral-300">Or fetch price history from DSE</h2>

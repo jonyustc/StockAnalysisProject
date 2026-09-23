@@ -276,3 +276,21 @@ export function buildRows(headingCells: string[], body: string[][], fallbackSymb
   rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
   return { rows, columns, issues }
 }
+
+/**
+ * The company part of a file name, for a file that does not name its stock:
+ * "Square Pharma Stock Price History (1).csv" leaves "Square Pharma".
+ *
+ * Only a hint. Whoever uses it matches the result against the companies
+ * known, takes it only when exactly one matches, and says on screen that the
+ * stock came from the file's name rather than from the file.
+ */
+export function nameFromFile(fileName: string): string {
+  return fileName
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/[_+-]+/g, ' ')
+    .replace(/\b(stock|shares?|prices?|history|historical|data|daily|export|download|csv|of|the)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}

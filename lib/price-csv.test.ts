@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { detectDateOrder, parseDate, parsePriceCsv, splitCsvLine } from './price-csv'
+import { detectDateOrder, nameFromFile, parseDate, parsePriceCsv, splitCsvLine } from './price-csv'
 
 describe('parseDate', () => {
   it('reads the formats sources write', () => {
@@ -132,5 +132,19 @@ describe('other sources', () => {
     const { columns } = parsePriceCsv('Date,Price,Close\n2026-09-22,1,2\n', 'AAA')
     assert.equal(columns['Close'], 'close')
     assert.equal(columns['Price'], undefined)
+  })
+})
+
+describe('nameFromFile', () => {
+  it('leaves the company part of a download name', () => {
+    assert.equal(nameFromFile('Square Pharma Stock Price History (1).csv'), 'Square Pharma')
+    assert.equal(nameFromFile('Berger Paints Bangladesh Historical Data.csv'), 'Berger Paints Bangladesh')
+    assert.equal(nameFromFile('MARICO_historical_data.csv'), 'MARICO')
+    assert.equal(nameFromFile('Grameenphone Ltd Stock Price History.csv'), 'Grameenphone Ltd')
+  })
+
+  it('leaves nothing worth matching when the name says nothing', () => {
+    assert.equal(nameFromFile('prices.csv'), '')
+    assert.equal(nameFromFile('daily-data (3).csv'), '')
   })
 })

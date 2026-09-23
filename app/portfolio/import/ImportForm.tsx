@@ -25,7 +25,7 @@ function taka(value: number | null | undefined): string {
   return `৳${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export function ImportForm() {
+export function ImportForm({ symbols = [] }: { symbols?: string[] }) {
   const [result, previewAction, reading] = useActionState<ImportPreview | null, FormData>(
     previewStatement,
     null,
@@ -33,6 +33,7 @@ export function ImportForm() {
   // Ledgers and reports have their own review; a portfolio statement uses the
   // one below.
   const [fileName, setFileName] = useState('')
+  const isSpreadsheet = /.(csv|txt|tsv)$/i.test(fileName)
   const report = result?.ok && result.kind && result.kind !== 'portfolio' ? result : null
   const preview = report ? null : (result as StatementPreview | null)
   const [applied, applyAction, applying] = useActionState<ApplyResult | null, FormData>(
@@ -71,6 +72,26 @@ export function ImportForm() {
           required
           className="text-sm text-neutral-300 file:mr-3 file:rounded file:border-0 file:bg-neutral-800 file:px-3 file:py-1.5 file:text-sm file:text-neutral-200 hover:file:bg-neutral-700"
         />
+        {/* A price file often does not name its stock — investing.com's does
+            not — so one can be chosen here. A broker PDF names its own. */}
+        {isSpreadsheet ? (
+          <label className="text-xs text-neutral-400">
+            Stock
+            <select
+              name="symbol"
+              defaultValue=""
+              className="ml-2 rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-200 outline-none focus:border-sky-600"
+            >
+              <option value="">from the file</option>
+              {symbols.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         <button
           type="submit"
           disabled={reading}

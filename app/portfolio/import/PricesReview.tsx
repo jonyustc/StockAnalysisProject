@@ -34,6 +34,14 @@ export function PricesReview({ preview, fileName }: { preview: PricesPreview; fi
         />
       </section>
 
+      {preview.symbolFrom === 'filename' ? (
+        <p className="rounded border border-amber-900/60 bg-amber-950/20 px-4 py-2.5 text-xs text-amber-200/80">
+          This file does not say which stock it is, so it was taken from the file name:{' '}
+          <strong className="font-medium">{preview.symbols.map((s) => s.symbol).join(', ')}</strong>. If that is wrong,
+          choose the stock above and read the file again.
+        </p>
+      ) : null}
+
       {preview.issues.length > 0 ? (
         <div className="rounded border border-amber-900/60 bg-amber-950/30 px-4 py-2.5 text-xs text-amber-200/80">
           {preview.issues.map((issue) => (

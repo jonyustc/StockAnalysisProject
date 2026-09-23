@@ -168,7 +168,7 @@ export async function previewStatement(
     if (text.includes('\0')) {
       return { ok: false, message: 'That file is neither a PDF nor a text file of prices.' }
     }
-    return previewPrices(text, String(formData.get('symbol') ?? '').toUpperCase() || undefined)
+    return previewPrices(text, String(formData.get('symbol') ?? '').toUpperCase() || undefined, file.name)
   }
 
   let items

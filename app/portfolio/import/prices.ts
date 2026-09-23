@@ -4,7 +4,9 @@ import { inArray, sql } from 'drizzle-orm'
 
 import { db } from '@/db/client'
 import { companies, dailyPrices } from '@/db/schema'
-import { parsePriceCsv, type PriceRow } from '@/lib/price-csv'
+import { listCompanyNames } from '@/db/queries'
+import { matchCompany } from '@/lib/dividends'
+import { nameFromFile, parsePriceCsv, type PriceRow } from '@/lib/price-csv'
 
 /*
  * Importing historical prices from a CSV. The preview says what each stock
@@ -30,6 +32,8 @@ export interface PricesPreview {
   ok: true
   kind: 'prices'
   message: string
+  /** How the stock was decided, when the file itself does not say. */
+  symbolFrom?: 'column' | 'chosen' | 'filename'
   /** Heading in the file → what it was read as. */
   columns: Record<string, string>
   issues: string[]
@@ -65,12 +69,37 @@ async function storedFor(symbols: string[], dates: string[]) {
   return new Map(rows.map((r) => [r.symbol, { days: r.days, from: r.from, to: r.to, overlapping: r.overlapping }]))
 }
 
-export async function previewPrices(text: string, fallbackSymbol?: string): Promise<PricesPreview | Failure> {
-  return planPrices(parsePriceCsv(text, fallbackSymbol))
+export async function previewPrices(
+  text: string,
+  chosenSymbol?: string,
+  fileName?: string,
+): Promise<PricesPreview | Failure> {
+  const first = parsePriceCsv(text, chosenSymbol)
+  const hasOwn = first.rows.length > 0 && first.rows.every((r) => r.symbol !== null)
+  if (hasOwn) {
+    return planPrices(first, chosenSymbol ? 'chosen' : 'column')
+  }
+
+  // A file with no trading code — investing.com and most foreign exports —
+  // is named after the company often enough to be worth reading: "Square
+  // Pharma Stock Price History.csv". A guess is only used when exactly one
+  // company matches, and the preview says where it came from.
+  const guess = fileName ? matchCompany(nameFromFile(fileName), await listCompanyNames()) : null
+  if (!guess) {
+    return {
+      ok: false,
+      message:
+        'This file has no trading code column, so it does not say which stock it is. Choose one above and read it again.',
+    }
+  }
+  return planPrices(parsePriceCsv(text, guess), 'filename')
 }
 
 /** The same preview, whether the prices came from a file or from DSE. */
-export async function planPrices({ rows, columns, issues }: { rows: PriceRow[]; columns: Record<string, string>; issues: string[] }): Promise<PricesPreview | Failure> {
+export async function planPrices(
+  { rows, columns, issues }: { rows: PriceRow[]; columns: Record<string, string>; issues: string[] },
+  symbolFrom?: PricesPreview['symbolFrom'],
+): Promise<PricesPreview | Failure> {
 
   if (rows.length === 0) {
     return { ok: false, message: `No prices could be read. ${issues.join(' ')}`.trim() }
@@ -108,6 +137,7 @@ export async function planPrices({ rows, columns, issues }: { rows: PriceRow[]; 
   return {
     ok: true,
     kind: 'prices',
+    symbolFrom,
     message: `Read ${rows.length.toLocaleString()} days for ${symbols.length} stock${symbols.length === 1 ? '' : 's'}.`,
     columns,
     issues,
