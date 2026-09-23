@@ -26,7 +26,9 @@
     "db:backup:supabase": "tsx scripts/backup-now.ts --target=supabase",
     "smoke": "tsx scripts/smoke-entry.ts && tsx scripts/smoke-verify.ts",
     "prices:history": "tsx scripts/import-price-history.ts",
-    "prices:history:supabase": "tsx scripts/import-price-history.ts --target=supabase"
+    "prices:history:supabase": "tsx scripts/import-price-history.ts --target=supabase",
+    "prices:dse": "tsx scripts/fetch-dse-prices.ts",
+    "prices:dse:supabase": "tsx scripts/fetch-dse-prices.ts --target=supabase"
   },
   "dependencies": {
     "dotenv": "^18.0.1",

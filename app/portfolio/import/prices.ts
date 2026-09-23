@@ -66,7 +66,11 @@ async function storedFor(symbols: string[], dates: string[]) {
 }
 
 export async function previewPrices(text: string, fallbackSymbol?: string): Promise<PricesPreview | Failure> {
-  const { rows, columns, issues } = parsePriceCsv(text, fallbackSymbol)
+  return planPrices(parsePriceCsv(text, fallbackSymbol))
+}
+
+/** The same preview, whether the prices came from a file or from DSE. */
+export async function planPrices({ rows, columns, issues }: { rows: PriceRow[]; columns: Record<string, string>; issues: string[] }): Promise<PricesPreview | Failure> {
 
   if (rows.length === 0) {
     return { ok: false, message: `No prices could be read. ${issues.join(' ')}`.trim() }

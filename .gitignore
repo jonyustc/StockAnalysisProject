@@ -51,3 +51,6 @@ next-env.d.ts
 # Price exports dropped in for import — data, not source.
 /*.csv
 /*.xlsx
+
+# Saved web pages dropped in for parsing — data, not source.
+/*.html

@@ -30,7 +30,7 @@ export interface ParsedPriceCsv {
   issues: string[]
 }
 
-const ALIASES: Record<keyof Omit<PriceRow, 'symbol'> | 'symbol', string[]> = {
+export const ALIASES: Record<keyof Omit<PriceRow, 'symbol'> | 'symbol', string[]> = {
   date: ['date', 'tradedate', 'trade date', 'trading date', 'time', 'timestamp', 'day'],
   close: ['close', 'closep', 'close price', 'closing price', 'closeprice', 'ltp', 'last', 'last price', 'lastprice', 'close*'],
   open: ['open', 'openp', 'open price', 'openprice', 'opening price'],
@@ -45,8 +45,8 @@ const MONTHS: Record<string, string> = {
   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 }
 
-const clean = (value: string) => value.trim().replace(/^["']|["']$/g, '').trim()
-const normalise = (heading: string) => clean(heading).toLowerCase().replace(/[_.]/g, ' ').replace(/\s+/g, ' ').trim()
+export const cleanCell = (value: string) => value.trim().replace(/^["']|["']$/g, '').trim()
+const normalise = (heading: string) => cleanCell(heading).toLowerCase().replace(/[_.]/g, ' ').replace(/\s+/g, ' ').trim()
 
 /** The delimiter a line is written with: comma, tab or semicolon. */
 function delimiterOf(line: string): string {
@@ -54,8 +54,8 @@ function delimiterOf(line: string): string {
   return counts.sort((a, b) => b[1] - a[1])[0][1] > 1 ? counts.sort((a, b) => b[1] - a[1])[0][0] : ','
 }
 
-function number(value: string): number | null {
-  const cleaned = clean(value).replace(/,/g, '')
+export function parseCell(value: string): number | null {
+  const cleaned = cleanCell(value).replace(/,/g, '')
   if (cleaned === '' || cleaned === '-' || cleaned === 'N/A') return null
   const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : null
@@ -77,7 +77,7 @@ export function detectDateOrder(values: string[]): { order: DateOrder; certain: 
   let monthFirst = false
 
   for (const value of values) {
-    const parts = clean(value).match(/^(\d{1,2})[/-](\d{1,2})[/-]\d{4}$/)
+    const parts = cleanCell(value).match(/^(\d{1,2})[/-](\d{1,2})[/-]\d{4}$/)
     if (!parts) continue
     if (Number(parts[1]) > 12) dayFirst = true
     if (Number(parts[2]) > 12) monthFirst = true
@@ -91,7 +91,7 @@ export function detectDateOrder(values: string[]): { order: DateOrder; certain: 
 }
 
 export function parseDate(value: string, order: DateOrder = 'dayFirst'): string | null {
-  const text = clean(value)
+  const text = cleanCell(value)
 
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
@@ -153,7 +153,20 @@ export function parsePriceCsv(text: string, fallbackSymbol?: string): ParsedPric
   if (lines.length < 2) return { rows: [], columns: {}, issues: ['The file has no rows under its heading.'] }
 
   const delimiter = delimiterOf(lines[0])
-  const headingCells = splitCsvLine(lines[0], delimiter)
+  return buildRows(
+    splitCsvLine(lines[0], delimiter),
+    lines.slice(1).map((line) => splitCsvLine(line, delimiter)),
+    fallbackSymbol,
+  )
+}
+
+/**
+ * Headings and rows of cells into prices — however they were laid out.
+ *
+ * Shared by the CSV reader and the DSE archive page, so a column means the
+ * same thing whichever way the prices arrived.
+ */
+export function buildRows(headingCells: string[], body: string[][], fallbackSymbol?: string): ParsedPriceCsv {
   const headings = headingCells.map(normalise)
   const index: Partial<Record<keyof PriceRow, number>> = {}
   const columns: Record<string, string> = {}
@@ -166,7 +179,7 @@ export function parsePriceCsv(text: string, fallbackSymbol?: string): ParsedPric
       const at = headings.findIndex((h) => h === alias || h.replace(/\*/g, '').trim() === alias)
       if (at >= 0) {
         index[field] = at
-        columns[clean(headingCells[at])] = field
+        columns[cleanCell(headingCells[at])] = field
         break
       }
     }
@@ -177,7 +190,6 @@ export function parsePriceCsv(text: string, fallbackSymbol?: string): ParsedPric
   if (index.close === undefined) issues.push('No closing price column found.')
   if (issues.length > 0) return { rows: [], columns, issues }
 
-  const body = lines.slice(1).map((line) => splitCsvLine(line, delimiter))
   // Which way round this file writes dates, from all of its rows at once.
   const dates = detectDateOrder(body.map((cells) => cells[index.date!] ?? ''))
   if (dates.conflict) {
@@ -196,27 +208,27 @@ export function parsePriceCsv(text: string, fallbackSymbol?: string): ParsedPric
   for (let i = 0; i < body.length; i += 1) {
     const cells = body[i]
     // A line of empty fields is padding, not a row that failed.
-    if (cells.every((cell) => clean(cell) === '')) continue
+    if (cells.every((cell) => cleanCell(cell) === '')) continue
     const at = (field: keyof PriceRow) => (index[field] === undefined ? '' : (cells[index[field]!] ?? ''))
 
-    if (/^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(clean(at('date')))) slashed += 1
+    if (/^\d{1,2}[/-]\d{1,2}[/-]\d{4}$/.test(cleanCell(at('date')))) slashed += 1
     const date = parseDate(at('date'), dates.order)
-    const close = number(at('close'))
+    const close = parseCell(at('close'))
     if (!date || close === null || close <= 0) {
       unreadable += 1
-      if (unreadable <= 5) issues.push(`Line ${i + 2}: could not read "${lines[i + 1].slice(0, 60)}".`)
+      if (unreadable <= 5) issues.push(`Line ${i + 2}: could not read "${cells.join(',').slice(0, 60)}".`)
       continue
     }
 
-    const symbol = index.symbol !== undefined ? clean(at('symbol')).toUpperCase() : (fallbackSymbol ?? null)
+    const symbol = index.symbol !== undefined ? cleanCell(at('symbol')).toUpperCase() : (fallbackSymbol ?? null)
     const row: PriceRow = {
       symbol: symbol || null,
       date,
       close,
-      open: number(at('open')),
-      high: number(at('high')),
-      low: number(at('low')),
-      volume: number(at('volume')),
+      open: parseCell(at('open')),
+      high: parseCell(at('high')),
+      low: parseCell(at('low')),
+      volume: parseCell(at('volume')),
     }
 
     // A file may repeat a day; the later line wins.

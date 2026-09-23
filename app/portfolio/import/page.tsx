@@ -1,10 +1,14 @@
 import Link from 'next/link'
 
+import { listCompanyNames } from '@/db/queries'
+
+import { DseFetch } from './DseFetch'
 import { ImportForm } from './ImportForm'
 
 export const dynamic = 'force-dynamic'
 
-export default function ImportPage() {
+export default async function ImportPage() {
+  const companies = await listCompanyNames()
   return (
     <div className="space-y-6">
       <header>
@@ -43,6 +47,15 @@ export default function ImportPage() {
       </header>
 
       <ImportForm />
+
+      <section className="space-y-2 border-t border-neutral-800 pt-6">
+        <h2 className="text-sm font-medium text-neutral-300">Or fetch price history from DSE</h2>
+        <p className="max-w-3xl text-xs text-neutral-500">
+          The exchange publishes day-end prices for every stock. Fetching them here saves downloading a file, and the
+          preview is the same one a CSV gives.
+        </p>
+        <DseFetch symbols={companies.map((c) => c.symbol).sort()} />
+      </section>
     </div>
   )
 }

@@ -22,7 +22,10 @@ import {
 import { buildPortfolio, type PortfolioTransaction } from '@/lib/portfolio'
 import { hasSession, NOT_SIGNED_IN } from '@/lib/session'
 import { extractTextItems, looksScanned } from '@/lib/statements/extract'
+import { DSE_MAX_YEARS, fetchDseHistory } from '@/lib/dse-fetch'
+import { yearsAgo } from '@/lib/insight-inputs'
 import { detectDocument } from '@/lib/statements/detect'
+import { dhakaNow } from '@/lib/trading-calendar'
 import { parseLankaBanglaPortfolio } from '@/lib/statements/lankabangla'
 import type { PlannedDividend } from '@/lib/statements/plan'
 import { reconcile, type Suggestion } from '@/lib/statements/reconcile'
@@ -40,7 +43,7 @@ import {
   type LedgerPreview,
   type PnlPreview,
 } from './reports'
-import { applyPrices, cleanPriceRows, previewPrices, type PricesPreview } from './prices'
+import { applyPrices, cleanPriceRows, planPrices, previewPrices, type PricesPreview } from './prices'
 
 /** Well above a real statement (~65 KB), well below the action body limit. */
 const MAX_BYTES = 3 * 1024 * 1024
@@ -822,4 +825,59 @@ export async function applyPriceHistory(
         : 'Nothing was imported.') +
       (result.skipped.length > 0 ? ` Skipped ${result.skipped.join(', ')} — not in the database.` : ''),
   }
+}
+
+/**
+ * Fetch a stock's day-end history from DSE and show what it would change.
+ *
+ * DSE's archive caps what one request returns, so a range is fetched as
+ * several windows; a window that brings nothing back is reported rather
+ * than leaving a silent hole. Nothing is written here — the preview it
+ * returns is the same one a CSV gives, and the same button imports it.
+ */
+export async function fetchDsePrices(
+  _previous: ImportPreview | null,
+  formData: FormData,
+): Promise<ImportPreview> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  const symbol = String(formData.get('symbol') ?? '').trim().toUpperCase()
+  if (!/^[A-Z0-9][A-Z0-9&.\-]{1,19}$/.test(symbol)) return { ok: false, message: 'Enter a DSE trading code, such as SQURPHARMA.' }
+
+  const years = Number(formData.get('years') ?? 1)
+  if (!Number.isInteger(years) || years < 1 || years > DSE_MAX_YEARS) {
+    return { ok: false, message: `Choose between 1 and ${DSE_MAX_YEARS} years.` }
+  }
+
+  const to = dhakaNow().date
+  const from = yearsAgo(to, years)
+
+  const history = await fetchDseHistory({
+    symbol,
+    from,
+    to,
+    pauseMs: 400,
+    fetchPage: async (url) => {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: { accept: 'text/html', 'user-agent': 'dse-research/1.0 (personal portfolio tracker)' },
+        signal: AbortSignal.timeout(20_000),
+      })
+      return { ok: response.ok, status: response.status, text: await response.text() }
+    },
+  })
+
+  if (history.rows.length === 0) {
+    return {
+      ok: false,
+      message: `${history.issues[0] ?? 'DSE returned no rows.'} Check the trading code, or import a CSV instead.`,
+    }
+  }
+
+  const preview = await planPrices({
+    rows: history.rows,
+    columns: { 'DSE day-end archive': `${symbol} ${from} → ${to}` },
+    issues: history.issues,
+  })
+  return preview.ok ? { ...preview, message: `${preview.message} From DSE, ${history.windows.length} request(s).` } : preview
 }
