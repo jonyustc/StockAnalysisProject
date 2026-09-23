@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
+import { PriceInsight } from '@/app/components/PriceInsight'
+import { stockInsight } from '@/app/portfolio/insight-data'
 import {
   getCompanyBySymbol,
   getCorporateActionsBySymbol,
@@ -39,6 +41,7 @@ export default async function CompanyPage({
       getCorporateActionsBySymbol(),
       listPortfolioTransactions(),
     ])
+  const insight = await stockInsight(company.dseSymbol)
 
   const quote = quotes.get(company.dseSymbol)
   const own = ledger.filter((t) => t.symbol === company.dseSymbol)
@@ -152,6 +155,8 @@ export default async function CompanyPage({
           <span className="ml-auto text-sky-400">Cost history →</span>
         </Link>
       ) : null}
+
+      {insight ? <PriceInsight insight={insight} /> : null}
 
       {years.length === 0 ? (
         <p className="rounded border border-neutral-800 bg-neutral-900/40 p-6 text-sm text-neutral-400">

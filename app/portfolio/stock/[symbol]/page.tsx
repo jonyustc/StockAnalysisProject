@@ -2,11 +2,14 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
+import { PriceInsight } from '@/app/components/PriceInsight'
 import { getLatestQuotes, listBoAccounts, listPortfolioTransactions } from '@/db/queries'
 import { buildPortfolio, costTimeline, freeSharePlan } from '@/lib/portfolio'
+import { commissionRate } from '@/lib/targets'
 import { formatTradeDate } from '@/lib/trading-calendar'
 import { formatBDT, formatPercent } from '@/lib/units'
 
+import { stockInsight } from '../../insight-data'
 import { AccountFilter, ROW, Stat, TD, TH, THEAD_ROW } from '../../ui'
 import { TradePlanner } from './TradePlanner'
 
@@ -34,7 +37,12 @@ export default async function StockCostPage({
   const query = await searchParams
   const accountParam = Number(Array.isArray(query.account) ? query.account[0] : query.account)
 
-  const [all, quotes, accounts] = await Promise.all([listPortfolioTransactions(), getLatestQuotes(), listBoAccounts()])
+  const [all, quotes, accounts, insight] = await Promise.all([
+    listPortfolioTransactions(),
+    getLatestQuotes(),
+    listBoAccounts(),
+    stockInsight(raw),
+  ])
   const ofStock = all.filter((t) => t.symbol === symbol)
   if (ofStock.length === 0) notFound()
 
@@ -111,6 +119,19 @@ export default async function StockCostPage({
           (after about 0.5% commission) takes out every taka you have put in — the other{' '}
           <strong>{plan.keep.toLocaleString()}</strong> would then have cost you nothing.
         </p>
+      ) : null}
+
+      {insight ? (
+        <PriceInsight
+          insight={insight}
+          holding={{
+            quantity: holding.quantity,
+            averageCost: holding.averageCost,
+            netCostPerShare: holding.netCostPerShare,
+            commissionRate: commissionRate(selected ? transactions : all),
+            accountId: selected?.id ?? null,
+          }}
+        />
       ) : null}
 
       {steps.length > 1 ? (

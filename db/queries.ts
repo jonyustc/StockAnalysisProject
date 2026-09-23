@@ -11,6 +11,7 @@ import {
   boAccounts,
   companies,
   corporateActions,
+  dailyPrices,
   financialFacts,
   fiscalPeriods,
   jobRuns,
@@ -535,4 +536,16 @@ export async function getClosesOnOrBefore(date: string) {
      ORDER BY c.dse_symbol, p.trade_date DESC
   `)
   return new Map(rows.rows.map((r) => [r.dse_symbol, { close: Number(r.close_price), tradeDate: r.trade_date }]))
+}
+
+/** Daily closes for one company, oldest first — the history insights read this. */
+export async function listPriceHistory(symbol: string) {
+  const rows = await db
+    .select({ date: dailyPrices.tradeDate, close: dailyPrices.closePrice })
+    .from(dailyPrices)
+    .innerJoin(companies, eq(companies.id, dailyPrices.companyId))
+    .where(eq(companies.dseSymbol, symbol.toUpperCase()))
+    .orderBy(asc(dailyPrices.tradeDate))
+
+  return rows.map((row) => ({ date: row.date, close: Number(row.close) }))
 }
