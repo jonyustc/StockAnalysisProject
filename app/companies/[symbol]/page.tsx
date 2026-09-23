@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { SeriesChart } from '@/app/components/charts/SeriesChart'
+import { DividendRecordSection } from '@/app/components/DividendRecord'
 import { PriceInsight } from '@/app/components/PriceInsight'
 import { stockInsight } from '@/app/portfolio/insight-data'
 import {
@@ -9,8 +10,11 @@ import {
   getCorporateActionsBySymbol,
   getFactHistory,
   getLatestQuotes,
+  listAnnouncedDividends,
   listPortfolioTransactions,
 } from '@/db/queries'
+import { adjustmentFactorFor } from '@/lib/corporate-actions'
+import { summariseDividends } from '@/lib/dividend-record'
 import { fiscalYearBounds, fiscalYearRangeLabel } from '@/lib/fiscal'
 import {
   adjustForCorporateActions,
@@ -42,6 +46,7 @@ export default async function CompanyPage({
       listPortfolioTransactions(),
     ])
   const insight = await stockInsight(company.dseSymbol)
+  const dividends = summariseDividends(await listAnnouncedDividends(company.id))
 
   const quote = quotes.get(company.dseSymbol)
   const own = ledger.filter((t) => t.symbol === company.dseSymbol)
@@ -58,6 +63,9 @@ export default async function CompanyPage({
     reported.map((year) => [year.fiscalYear, fiscalYearBounds(fye, year.fiscalYear).end]),
   )
   const years = adjustForCorporateActions(reported, actions, periodEnds)
+  // A cash dividend changes no share count — its factor is 1 — so it has no
+  // place in a notice about figures having been restated.
+  const restating = actions.filter((action) => adjustmentFactorFor(action) !== 1)
 
   const metrics = computeHistory(years)
   const summary = summariseHistory(years, metrics)
@@ -164,6 +172,15 @@ export default async function CompanyPage({
 
       {insight ? <PriceInsight insight={insight} /> : null}
 
+      {/* Stands on the dividend announcements alone, so it shows whether or not
+          any financial years have been entered. */}
+      <DividendRecordSection
+        record={dividends}
+        price={quote?.close ?? null}
+        netCostPerShare={holding?.netCostPerShare ?? null}
+        quantity={holding?.quantity ?? 0}
+      />
+
       {years.length === 0 ? (
         <p className="rounded border border-neutral-800 bg-neutral-900/40 p-6 text-sm text-neutral-400">
           Nothing to analyse yet.{' '}
@@ -198,11 +215,11 @@ export default async function CompanyPage({
             </p>
           ) : null}
 
-          {actions.length > 0 ? (
+          {restating.length > 0 ? (
             <p className="rounded border border-sky-900/60 bg-sky-950/30 px-4 py-2.5 text-xs text-sky-200/80">
               <strong className="font-medium">
-                Per-share figures are adjusted for {actions.length} corporate action
-                {actions.length === 1 ? '' : 's'}.
+                Per-share figures are adjusted for {restating.length} corporate action
+                {restating.length === 1 ? '' : 's'}.
               </strong>{' '}
               EPS, NAVPS and dividend per share for years before the issue are restated onto the
               current share base, so growth rates compare like with like. Reported figures are

@@ -25,6 +25,8 @@
     "db:backup": "tsx scripts/backup-now.ts",
     "db:backup:supabase": "tsx scripts/backup-now.ts --target=supabase",
     "smoke": "tsx scripts/smoke-entry.ts && tsx scripts/smoke-verify.ts",
+    "dividends:import": "tsx scripts/import-dividends.ts",
+    "dividends:import:supabase": "tsx scripts/import-dividends.ts --target=supabase",
     "prices:history": "tsx scripts/import-price-history.ts",
     "prices:history:supabase": "tsx scripts/import-price-history.ts --target=supabase",
     "prices:dse": "tsx scripts/fetch-dse-prices.ts",

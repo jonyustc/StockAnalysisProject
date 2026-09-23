@@ -14,7 +14,8 @@
  * the first or the largest.
  */
 
-import { buildRows, cleanCell, type ParsedPriceCsv } from './price-csv'
+import { buildRows, type ParsedPriceCsv } from './price-csv'
+import { htmlTables } from './table'
 
 export const DSE_ARCHIVE_URL = 'https://www.dsebd.org/day_end_archive.php'
 
@@ -30,31 +31,6 @@ export function dseArchiveUrl({ symbol, from, to }: { symbol: string; from: stri
   return url.toString()
 }
 
-const ENTITIES: Record<string, string> = {
-  '&nbsp;': ' ',
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-}
-
-/** The text of one cell: tags stripped, entities resolved, spaces collapsed. */
-export function cellText(html: string): string {
-  return cleanCell(
-    html
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&[a-z]+;|&#\d+;/gi, (entity) => ENTITIES[entity.toLowerCase()] ?? ' ')
-      .replace(/\s+/g, ' '),
-  )
-}
-
-function rowsOf(table: string): string[][] {
-  return (table.match(/<tr[\s\S]*?<\/tr>/gi) ?? []).map((row) =>
-    (row.match(/<t[dh][\s\S]*?<\/t[dh]>/gi) ?? []).map(cellText),
-  )
-}
-
 export interface ParsedArchive extends ParsedPriceCsv {
   /** How many rows the page's table held, before any were rejected. */
   tableRows: number
@@ -68,10 +44,8 @@ export interface ParsedArchive extends ParsedPriceCsv {
  * than looking like a successful fetch of nothing.
  */
 export function parseDseArchive(html: string): ParsedArchive {
-  const tables = html.match(/<table[\s\S]*?<\/table>/gi) ?? []
-
-  for (const table of tables) {
-    const rows = rowsOf(table).filter((cells) => cells.length > 1)
+  for (const table of htmlTables(html)) {
+    const rows = table.filter((cells) => cells.length > 1)
     if (rows.length < 2) continue
 
     const headings = rows[0].map((h) => h.toLowerCase().replace(/\*/g, '').trim())

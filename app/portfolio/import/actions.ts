@@ -44,6 +44,12 @@ import {
   type LedgerPreview,
   type PnlPreview,
 } from './reports'
+import {
+  applyDividendHistory,
+  cleanDividendLines,
+  previewDividendHistory,
+  type DividendHistoryPreview,
+} from './dividend-history'
 import { applyPrices, cleanPriceRows, planPrices, previewPrices, type PricesPreview } from './prices'
 
 /** Well above a real statement (~65 KB), well below the action body limit. */
@@ -55,6 +61,7 @@ export type ImportPreview =
   | DividendReportPreview
   | PnlPreview
   | PricesPreview
+  | DividendHistoryPreview
 
 export interface StatementPreview {
   kind?: 'portfolio'
@@ -874,4 +881,53 @@ export async function fetchDsePrices(
     issues: history.issues,
   })
   return preview.ok ? { ...preview, message: `${preview.message} From DSE, ${history.windows.length} request(s).` } : preview
+}
+
+/** Read a pasted dividend history and say what it would change. */
+export async function previewPastedDividends(
+  _previous: ImportPreview | null,
+  formData: FormData,
+): Promise<ImportPreview> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  const symbol = String(formData.get('symbol') ?? '').trim().toUpperCase()
+  if (!/^[A-Z0-9][A-Z0-9&.\-]{1,19}$/.test(symbol)) return { ok: false, message: 'Choose the stock this history belongs to.' }
+
+  const text = String(formData.get('pasted') ?? '')
+  if (text.trim() === '') return { ok: false, message: 'Paste the dividend table first.' }
+  if (text.length > 500_000) return { ok: false, message: 'That paste is very large; copy just the dividend table.' }
+
+  return previewDividendHistory(text, symbol)
+}
+
+/** Store the dividends read from a pasted table. */
+export async function applyPastedDividends(
+  _previous: ApplyResult | null,
+  formData: FormData,
+): Promise<ApplyResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  const symbol = String(formData.get('symbol') ?? '').trim().toUpperCase()
+  if (!/^[A-Z0-9][A-Z0-9&.\-]{1,19}$/.test(symbol)) return { ok: false, message: 'Missing the stock.' }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(String(formData.get('lines') ?? ''))
+  } catch {
+    return { ok: false, message: 'The dividends could not be read. Paste the table again.' }
+  }
+
+  const ticked = new Set(formData.getAll('dividend').map(String))
+  const all = cleanDividendLines(parsed)
+  if (!all) return { ok: false, message: 'Some rows were malformed, so nothing was saved. Paste the table again.' }
+
+  const rows = all.filter((row) => ticked.has(row.exDate))
+  if (rows.length === 0) return { ok: false, message: 'Nothing was ticked, so nothing was saved.' }
+
+  const result = await applyDividendHistory(symbol, rows, String(formData.get('source') ?? 'a pasted table').slice(0, 80))
+
+  revalidatePath(`/companies/${symbol}`)
+  revalidatePath(`/companies/${symbol}/price`)
+  revalidatePath('/portfolio/dividends')
+  return result
 }

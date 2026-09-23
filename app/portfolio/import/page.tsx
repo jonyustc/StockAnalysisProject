@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { listCompanyNames } from '@/db/queries'
 
 import { DseFetch } from './DseFetch'
+import { PasteDividends } from './PasteDividends'
 import { ImportForm } from './ImportForm'
 
 export const dynamic = 'force-dynamic'
@@ -57,6 +58,15 @@ export default async function ImportPage() {
           preview is the same one a CSV gives.
         </p>
         <DseFetch symbols={companies.map((c) => c.symbol).sort()} />
+      </section>
+
+      <section className="space-y-2 border-t border-neutral-800 pt-6">
+        <h2 className="text-sm font-medium text-neutral-300">Or paste a dividend history</h2>
+        <p className="max-w-3xl text-xs text-neutral-500">
+          Dividends a company has announced, going back further than the years you have entered by hand. Copy the table
+          from wherever it is published and paste it — markup and all.
+        </p>
+        <PasteDividends symbols={companies.map((c) => c.symbol).sort()} />
       </section>
     </div>
   )

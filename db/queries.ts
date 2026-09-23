@@ -549,3 +549,30 @@ export async function listPriceHistory(symbol: string) {
 
   return rows.map((row) => ({ date: row.date, close: Number(row.close) }))
 }
+
+/** Cash dividends a company has announced, newest first. */
+export async function listAnnouncedDividends(companyId: number) {
+  const rows = await db
+    .select({
+      exDate: corporateActions.exDate,
+      paymentDate: corporateActions.paymentDate,
+      cashPerShare: corporateActions.cashPerShare,
+      cashDividendPct: corporateActions.cashDividendPct,
+      notes: corporateActions.notes,
+      verification: corporateActions.verification,
+    })
+    .from(corporateActions)
+    .where(and(eq(corporateActions.companyId, companyId), eq(corporateActions.actionType, 'cash_dividend')))
+    .orderBy(desc(corporateActions.exDate))
+
+  return rows
+    .filter((row) => row.exDate !== null)
+    .map((row) => ({
+      exDate: row.exDate!,
+      paymentDate: row.paymentDate,
+      amount: row.cashPerShare === null ? null : Number(row.cashPerShare),
+      percentOfFace: row.cashDividendPct === null ? null : Number(row.cashDividendPct),
+      /** That source had restated it for later bonus issues. */
+      restated: (row.notes ?? '').includes('restated it for later bonus issues'),
+    }))
+}

@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
-import { cellText, dseArchiveUrl, parseDseArchive } from './dse-archive'
+import { dseArchiveUrl, parseDseArchive } from './dse-archive'
+import { cellText } from './table'
 import { fetchDseHistory, windowsFor } from './dse-fetch'
 import { parsePriceCsv } from './price-csv'
 
