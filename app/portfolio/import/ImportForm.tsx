@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 
 import {
   applyStatement,
@@ -9,6 +9,7 @@ import {
   type ImportPreview,
   type StatementPreview,
 } from './actions'
+import { PricesReview } from './PricesReview'
 import { DividendReportReview, LedgerReview, PnlReview } from './ReportReviews'
 
 const KIND: Record<string, { label: string; className: string }> = {
@@ -31,6 +32,7 @@ export function ImportForm() {
   )
   // Ledgers and reports have their own review; a portfolio statement uses the
   // one below.
+  const [fileName, setFileName] = useState('')
   const report = result?.ok && result.kind && result.kind !== 'portfolio' ? result : null
   const preview = report ? null : (result as StatementPreview | null)
   const [applied, applyAction, applying] = useActionState<ApplyResult | null, FormData>(
@@ -64,7 +66,8 @@ export function ImportForm() {
         <input
           type="file"
           name="statement"
-          accept="application/pdf,.pdf"
+          accept="application/pdf,.pdf,text/csv,.csv,.txt"
+          onChange={(e) => setFileName(e.target.files?.[0]?.name ?? '')}
           required
           className="text-sm text-neutral-300 file:mr-3 file:rounded file:border-0 file:bg-neutral-800 file:px-3 file:py-1.5 file:text-sm file:text-neutral-200 hover:file:bg-neutral-700"
         />
@@ -73,15 +76,17 @@ export function ImportForm() {
           disabled={reading}
           className="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
         >
-          {reading ? 'Reading…' : 'Read statement'}
+          {reading ? 'Reading…' : 'Read file'}
         </button>
         <p className="w-full text-xs text-neutral-600">
-          A portfolio statement, client ledger, cash dividend ledger or profit/loss analysis —
-          which one is worked out from the PDF itself. Nothing is recorded yet: this only
-          compares. The PDF is read in memory and discarded; it is never stored.
+          A broker PDF — portfolio statement, client ledger, cash dividend ledger or profit/loss
+          analysis — or a CSV of historical daily prices. Which one it is comes from the file
+          itself, not its name. Nothing is recorded yet: this only compares. The file is read in
+          memory and discarded; it is never stored.
         </p>
       </form>
 
+      {report?.kind === 'prices' ? <PricesReview key={report.message} preview={report} fileName={fileName} /> : null}
       {report?.kind === 'ledger' ? <LedgerReview key={report.message + report.header.to} preview={report} /> : null}
       {report?.kind === 'dividends' ? <DividendReportReview key={report.message} preview={report} /> : null}
       {report?.kind === 'pnl' ? <PnlReview preview={report} /> : null}

@@ -40,6 +40,7 @@ import {
   type LedgerPreview,
   type PnlPreview,
 } from './reports'
+import { applyPrices, cleanPriceRows, previewPrices, type PricesPreview } from './prices'
 
 /** Well above a real statement (~65 KB), well below the action body limit. */
 const MAX_BYTES = 3 * 1024 * 1024
@@ -49,6 +50,7 @@ export type ImportPreview =
   | LedgerPreview
   | DividendReportPreview
   | PnlPreview
+  | PricesPreview
 
 export interface StatementPreview {
   kind?: 'portfolio'
@@ -145,17 +147,24 @@ export async function previewStatement(
 
   const file = formData.get('statement')
   if (!(file instanceof File) || file.size === 0) {
-    return { ok: false, message: 'Choose a statement PDF first.' }
+    return { ok: false, message: 'Choose a file first.' }
   }
   if (file.size > MAX_BYTES) {
-    return { ok: false, message: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB; a statement is well under 1 MB.` }
+    return { ok: false, message: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB; the most this reads is 3 MB.` }
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer())
+  const isPdf = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46
 
-  // Check the file really is a PDF rather than trusting its name.
-  if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
-    return { ok: false, message: 'That is not a PDF.' }
+  // A broker document is a PDF; a price history is text. Decided from the
+  // file itself, not from its name.
+  if (!isPdf) {
+    const text = new TextDecoder().decode(bytes)
+    // Anything with a null byte is some other binary, not a CSV.
+    if (text.includes('\0')) {
+      return { ok: false, message: 'That file is neither a PDF nor a text file of prices.' }
+    }
+    return previewPrices(text, String(formData.get('symbol') ?? '').toUpperCase() || undefined)
   }
 
   let items
@@ -773,4 +782,44 @@ export async function applyDividendReport(
 
   revalidatePortfolio()
   return result
+}
+
+/**
+ * Write historical prices read from a CSV. The rows come back from the
+ * preview, since the file itself is not kept, and every one is checked again
+ * before it is written.
+ */
+export async function applyPriceHistory(
+  _previous: ApplyResult | null,
+  formData: FormData,
+): Promise<ApplyResult> {
+  if (!(await hasSession())) return NOT_SIGNED_IN
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(String(formData.get('rows') ?? ''))
+  } catch {
+    return { ok: false, message: 'The prices could not be read. Choose the file again.' }
+  }
+
+  const rows = cleanPriceRows(parsed)
+  if (!rows) return { ok: false, message: 'Some rows were malformed, so nothing was imported. Choose the file again.' }
+
+  const name = String(formData.get('fileName') ?? '').slice(0, 80).replace(/[^\w.\- ]/g, '') || 'upload'
+  const result = await applyPrices(rows, `csv:${name}`)
+
+  revalidatePath('/portfolio')
+  revalidatePath('/portfolio/import')
+  for (const stock of result.coverage) revalidatePath(`/companies/${stock.symbol}`)
+
+  const covered = result.coverage.map((c) => `${c.symbol} ${c.days} days (${c.from} to ${c.to})`).join('; ')
+
+  return {
+    ok: result.written > 0,
+    message:
+      (result.written > 0
+        ? `Imported ${result.written.toLocaleString()} days. Stored now: ${covered}.`
+        : 'Nothing was imported.') +
+      (result.skipped.length > 0 ? ` Skipped ${result.skipped.join(', ')} — not in the database.` : ''),
+  }
 }
