@@ -25,7 +25,12 @@ import { resolveTarget, sslFor } from './target'
 
 function flag(name: string): string | undefined {
   const match = process.argv.find((arg) => arg.startsWith(`--${name}=`))
-  return match ? match.slice(name.length + 3) : undefined
+  if (match) return match.slice(name.length + 3)
+
+  // Run without the -- (npm run prices:history --file=x), npm turns the flag
+  // into an npm_config_* variable instead of passing it on.
+  const fromNpm = process.env[`npm_config_${name}`]
+  return fromNpm && fromNpm !== 'true' ? fromNpm : undefined
 }
 
 async function main() {

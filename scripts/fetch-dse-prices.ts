@@ -20,9 +20,37 @@ import { fetchDseHistory } from '../lib/dse-fetch'
 import type { PriceRow } from '../lib/price-csv'
 import { resolveTarget, sslFor } from './target'
 
+/*
+ * Arguments, however they arrive.
+ *
+ *   npm run prices:dse -- --held --years=5    the documented way
+ *   npm run prices:dse --held --years=5       without the --, npm turns the
+ *                                             flags into npm_config_* instead
+ *                                             of passing them on
+ *   npm run prices:dse -- held 5              or plainly
+ *   npx tsx scripts/fetch-dse-prices.ts --held
+ */
+const ARGS = process.argv.slice(2)
+
 function flag(name: string): string | undefined {
-  const match = process.argv.find((arg) => arg.startsWith(`--${name}=`))
-  return match ? match.slice(name.length + 3) : undefined
+  const match = ARGS.find((arg) => arg.startsWith(`--${name}=`))
+  if (match) return match.slice(name.length + 3)
+
+  const spaced = ARGS.indexOf(`--${name}`)
+  if (spaced >= 0 && ARGS[spaced + 1] && !ARGS[spaced + 1].startsWith('-')) return ARGS[spaced + 1]
+
+  const fromNpm = process.env[`npm_config_${name}`]
+  return fromNpm && fromNpm !== 'true' ? fromNpm : undefined
+}
+
+function has(name: string): boolean {
+  return ARGS.includes(`--${name}`) || ARGS.includes(name) || process.env[`npm_config_${name}`] === 'true'
+}
+
+/** A bare trading code, as in "npm run prices:dse -- SQURPHARMA". */
+function positionalSymbol(): string | undefined {
+  const word = ARGS.find((arg) => !arg.startsWith('-') && /^[A-Za-z0-9][A-Za-z0-9&.\-]{1,19}$/.test(arg))
+  return word && !['held', 'all'].includes(word.toLowerCase()) && !/^\d+$/.test(word) ? word : undefined
 }
 
 const fetchPage = async (url: string) => {
@@ -34,7 +62,8 @@ const fetchPage = async (url: string) => {
 }
 
 async function main() {
-  const years = Number(flag('years') ?? 5)
+  // A bare number, as in "-- held 3", is how many years.
+  const years = Number(flag('years') ?? ARGS.find((a) => /^\d{1,2}$/.test(a)) ?? 5)
   if (!Number.isInteger(years) || years < 1 || years > 20) {
     console.error('--years must be a whole number of years, 1 to 20.')
     process.exit(1)
@@ -47,21 +76,32 @@ async function main() {
   await client.connect()
 
   try {
-    const one = flag('symbol')?.toUpperCase()
+    const one = (flag('symbol') ?? positionalSymbol())?.toUpperCase()
+    const held = has('held')
+    const all = has('all')
+
+    if (!one && !held && !all) {
+      console.error('Say which stocks to fetch:\n')
+      console.error('  npm run prices:dse -- --held              every stock in your portfolio')
+      console.error('  npm run prices:dse -- --all               every company in the database')
+      console.error('  npm run prices:dse -- --symbol=SQURPHARMA just one')
+      console.error('\nAdd --years=5 for how far back; 5 is the default.')
+      console.error(`\n(This run was given: ${ARGS.length > 0 ? ARGS.join(' ') : 'nothing'})`)
+      process.exit(1)
+    }
+
     const { rows: choices } = await client.query<{ dse_symbol: string }>(
       one
         ? `SELECT dse_symbol FROM companies WHERE dse_symbol = $1`
-        : process.argv.includes('--held')
+        : held
           ? `SELECT DISTINCT c.dse_symbol FROM companies c
                JOIN portfolio_transactions t ON t.company_id = c.id ORDER BY 1`
-          : process.argv.includes('--all')
-            ? `SELECT dse_symbol FROM companies WHERE is_active ORDER BY 1`
-            : `SELECT dse_symbol FROM companies WHERE false`,
+          : `SELECT dse_symbol FROM companies WHERE is_active ORDER BY 1`,
       one ? [one] : [],
     )
 
     if (choices.length === 0) {
-      console.error(one ? `No company with symbol ${one}.` : 'Choose --symbol=CODE, --held or --all.')
+      console.error(one ? `No company with symbol ${one}.` : 'No companies matched — is the portfolio empty?')
       process.exit(1)
     }
 
