@@ -70,6 +70,8 @@ export function parseCell(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const round = (value: number | null) => (value === null ? null : Math.round(value))
+
 export type DateOrder = 'dayFirst' | 'monthFirst'
 
 /**
@@ -245,7 +247,9 @@ export function buildRows(headingCells: string[], body: string[][], fallbackSymb
       open: parseCell(at('open')),
       high: parseCell(at('high')),
       low: parseCell(at('low')),
-      volume: parseCell(at('volume')),
+      // A whole number of shares; a volume written "261.29K" is approximate
+      // to begin with, and the column it goes in holds integers.
+      volume: round(parseCell(at('volume'))),
     }
 
     // A file may repeat a day; the later line wins.

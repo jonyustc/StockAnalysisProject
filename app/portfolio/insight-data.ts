@@ -120,7 +120,18 @@ export async function stockInsight(symbol: string): Promise<StockInsight | null>
     ownYear: price !== null && coverage.hasYear ? rangeOver(history, yearsAgo(today, 1), price) : null,
     band:
       price !== null && coverage.hasBand
-        ? peBand(history, earningsTimeline(years, periodEnd), price, latest?.values.eps_basic ?? null, yearsAgo(today, 5))
+        ? peBand(
+            history,
+            // Earnings as reported at the time, not restated onto today's
+            // share base: the stored prices are the prices as traded, so a
+            // P/E from an old day must use the earnings per share of that
+            // day. Restating one side and not the other would make every
+            // year before a bonus issue look wrongly cheap.
+            earningsTimeline(facts.years, periodEnd),
+            price,
+            latest?.values.eps_basic ?? null,
+            yearsAgo(today, 5),
+          )
         : null,
     seasons: coverage.hasSeasons ? seasonality(history) : null,
     fall: coverage.hasYear ? drawdown(history) : null,

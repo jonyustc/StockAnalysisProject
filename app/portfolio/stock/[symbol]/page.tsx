@@ -62,9 +62,17 @@ export default async function StockCostPage({
   return (
     <div className="space-y-6">
       <header>
-        <Link href="/portfolio" className="text-xs text-neutral-500 hover:text-neutral-300">
-          ← Portfolio
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link href="/portfolio" className="text-xs text-neutral-500 hover:text-neutral-300">
+            ← Portfolio
+          </Link>
+          <Link
+            href={`/companies/${symbol}/price`}
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
+          >
+            Price history &amp; levels
+          </Link>
+        </div>
         <h1 className="mt-2 text-xl font-semibold text-neutral-100">
           {symbol} <span className="text-sm font-normal text-neutral-500">cost history</span>
         </h1>

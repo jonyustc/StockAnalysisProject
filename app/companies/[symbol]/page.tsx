@@ -121,6 +121,12 @@ export default async function CompanyPage({
           ) : null}
 
           <Link
+            href={`/companies/${company.dseSymbol}/price`}
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
+          >
+            Price history
+          </Link>
+          <Link
             href={`/companies/${company.dseSymbol}/data`}
             className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-600 hover:text-neutral-100"
           >
