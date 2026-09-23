@@ -104,3 +104,33 @@ describe('parsePriceCsv', () => {
     assert.ok(issues.some((i) => /no stock symbol/.test(i)))
   })
 })
+
+describe('other sources', () => {
+  it('reads a file whose close column is called Price, with abbreviated volumes', () => {
+    // The shape investing.com and similar sites export.
+    const csv =
+      '"Date","Price","Open","High","Low","Vol.","Change %"\n' +
+      '"Sep 22, 2026","216.00","216.00","216.50","215.50","1.02M","0.09%"\n' +
+      '"Sep 21, 2026","215.80","216.40","217.50","215.60","153.9K","-0.05%"\n' +
+      '"Sep 20, 2026","215.90","215.00","216.00","214.80","-","0.00%"\n'
+    const { rows, columns, issues } = parsePriceCsv(csv, 'SQURPHARMA')
+
+    assert.deepEqual(issues, [])
+    assert.equal(columns['Price'], 'close')
+    assert.equal(columns['Vol.'], 'volume')
+    assert.deepEqual(
+      rows.map((r) => [r.date, r.close, r.high, r.volume]),
+      [
+        ['2026-09-20', 215.9, 216, null],
+        ['2026-09-21', 215.8, 217.5, 153_900],
+        ['2026-09-22', 216, 216.5, 1_020_000],
+      ],
+    )
+  })
+
+  it('prefers a Close column over a Price column when a file has both', () => {
+    const { columns } = parsePriceCsv('Date,Price,Close\n2026-09-22,1,2\n', 'AAA')
+    assert.equal(columns['Close'], 'close')
+    assert.equal(columns['Price'], undefined)
+  })
+})

@@ -32,10 +32,12 @@ export interface ParsedPriceCsv {
 
 export const ALIASES: Record<keyof Omit<PriceRow, 'symbol'> | 'symbol', string[]> = {
   date: ['date', 'tradedate', 'trade date', 'trading date', 'time', 'timestamp', 'day'],
-  close: ['close', 'closep', 'close price', 'closing price', 'closeprice', 'ltp', 'last', 'last price', 'lastprice', 'close*'],
+  // 'price' last: a file with both a Close and a Price column means Close.
+  close: ['close', 'closep', 'close price', 'closing price', 'closeprice', 'ltp', 'last', 'last price', 'lastprice', 'close*', 'price'],
   open: ['open', 'openp', 'open price', 'openprice', 'opening price'],
   high: ['high', 'highp', 'high price', 'day high'],
   low: ['low', 'lowp', 'low price', 'day low'],
+  // Not "turnover" or "value": those are money, not a number of shares.
   volume: ['volume', 'vol', 'trade volume', 'shares traded', 'quantity', 'qty'],
   symbol: ['symbol', 'trading code', 'tradingcode', 'code', 'instrument', 'ticker', 'scrip'],
 }
@@ -54,9 +56,16 @@ function delimiterOf(line: string): string {
   return counts.sort((a, b) => b[1] - a[1])[0][1] > 1 ? counts.sort((a, b) => b[1] - a[1])[0][0] : ','
 }
 
+/** K, M and B, as sites abbreviate volumes: 1.02M is 1,020,000. */
+const SUFFIXES: Record<string, number> = { k: 1_000, m: 1_000_000, b: 1_000_000_000 }
+
 export function parseCell(value: string): number | null {
   const cleaned = cleanCell(value).replace(/,/g, '')
   if (cleaned === '' || cleaned === '-' || cleaned === 'N/A') return null
+
+  const abbreviated = cleaned.match(/^(-?\d*\.?\d+)\s*([KMB])$/i)
+  if (abbreviated) return Number(abbreviated[1]) * SUFFIXES[abbreviated[2].toLowerCase()]
+
   const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -96,10 +105,18 @@ export function parseDate(value: string, order: DateOrder = 'dayFirst'): string 
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
 
+  // 22-Sep-2026, 22 Sep 2026, 22 September 2026.
   const named = text.match(/^(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ](\d{4})$/)
   if (named) {
     const month = MONTHS[named[2].toLowerCase()]
     if (month) return `${named[3]}-${month}-${named[1].padStart(2, '0')}`
+  }
+
+  // Sep 22, 2026 — the month first, as American sites write it.
+  const monthFirst = text.match(/^([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/)
+  if (monthFirst) {
+    const month = MONTHS[monthFirst[1].toLowerCase()]
+    if (month) return `${monthFirst[3]}-${month}-${monthFirst[2].padStart(2, '0')}`
   }
 
   const slashed = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
